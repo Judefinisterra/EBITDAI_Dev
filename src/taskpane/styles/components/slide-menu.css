@@ -1,0 +1,398 @@
+/* 
+ * Slide Menu Component
+ * Navigation menu that slides in from the left
+ */
+
+/* ==============================================
+   SLIDE MENU CONTAINER
+   ============================================== */
+.slide-menu {
+    position: fixed;
+    top: 0;
+    left: -300px;
+    width: 300px;
+    height: 100vh;
+    background-color: var(--color-white, #ffffff);
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+    transition: left 0.3s ease;
+    z-index: 10001;
+    display: flex;
+    flex-direction: column;
+}
+
+.slide-menu.open {
+    left: 0;
+}
+
+/* ==============================================
+   SLIDE MENU HEADER
+   ============================================== */
+.slide-menu-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    border-bottom: 1px solid var(--color-border, #e0e0e0);
+}
+
+.slide-menu-header h2 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--color-text-primary, #333333);
+}
+
+.close-menu-button {
+    background: none;
+    border: none;
+    padding: 8px;
+    cursor: pointer;
+    color: var(--color-text-secondary, #666666);
+    transition: color 0.2s ease;
+}
+
+.close-menu-button:hover {
+    color: var(--color-text-primary, #333333);
+}
+
+.close-menu-button svg {
+    width: 24px;
+    height: 24px;
+}
+
+/* ==============================================
+   SLIDE MENU NAVIGATION
+   ============================================== */
+.slide-menu-nav {
+    flex: 1;
+    padding: 16px 0;
+    overflow-y: auto;
+}
+
+/* ==============================================
+   MENU ITEMS
+   ============================================== */
+.menu-item {
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--color-text-primary, #333333);
+    text-align: left;
+    transition: background-color 0.2s;
+    font-family: var(--font-family-primary, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+}
+
+.menu-item:hover {
+    background-color: var(--color-background-hover, #f5f5f5);
+}
+
+.menu-item:active {
+    background-color: var(--color-background-active, #eeeeee);
+}
+
+.menu-icon {
+    width: 20px;
+    height: 20px;
+    color: var(--color-text-secondary, #666666);
+    flex-shrink: 0;
+}
+
+/* ==============================================
+   BACK TO HOME ITEM
+   ============================================== */
+.back-to-home {
+    margin-top: auto;
+    border-top: 1px solid var(--color-border, #e0e0e0);
+    padding-top: 16px;
+}
+
+.back-to-home .menu-item {
+    color: var(--color-primary, #007acc);
+}
+
+.back-to-home .menu-icon {
+    color: var(--color-primary, #007acc);
+}
+
+/* ==============================================
+   ACCOUNT MODAL STYLES
+   ============================================== */
+.account-modal-content {
+    background-color: var(--color-white, #ffffff);
+    border-radius: 8px;
+    width: 90%;
+    max-width: 400px;
+    max-height: 90vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.account-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 20px;
+    background-color: #f8f9fa;
+    border-radius: 12px;
+    margin-bottom: 16px;
+}
+
+.user-avatar {
+    width: 48px;
+    height: 48px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+#user-avatar-text-modal {
+    color: #ffffff;
+    font-size: 18px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.user-details {
+    flex: 1;
+    min-width: 0;
+}
+
+.user-email {
+    font-size: 14px;
+    font-weight: 500;
+    color: #1a1a1a;
+    margin-bottom: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.user-status {
+    font-size: 12px;
+    color: #22c55e;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.user-status::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    background-color: #22c55e;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.logout-button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+
+.logout-button:hover {
+    background-color: #fef2f2;
+    border-color: #ef4444;
+    color: #ef4444;
+}
+
+.logout-button:active {
+    background-color: #fee2e2;
+    transform: scale(0.98);
+}
+
+.logout-icon {
+    width: 18px;
+    height: 18px;
+}
+
+.logout-button:hover .logout-icon {
+    color: #ef4444;
+}
+
+/* Refresh Button */
+.refresh-account-button {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px 20px;
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    margin-bottom: 12px;
+}
+
+.refresh-account-button:hover {
+    background-color: #eff6ff;
+    border-color: #3b82f6;
+    color: #3b82f6;
+}
+
+.refresh-account-button:active {
+    background-color: #dbeafe;
+    transform: scale(0.98);
+}
+
+.refresh-account-button:disabled {
+    background-color: #f3f4f6;
+    border-color: #e5e7eb;
+    color: #9ca3af;
+    cursor: not-allowed;
+}
+
+.refresh-icon {
+    width: 18px;
+    height: 18px;
+}
+
+.refresh-account-button:hover .refresh-icon {
+    color: #3b82f6;
+}
+
+.refresh-account-button.refreshing .refresh-icon {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ==============================================
+   OVERLAY (optional backdrop)
+   ============================================== */
+.slide-menu-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+    z-index: 10000;
+}
+
+.slide-menu-overlay.show {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* ==============================================
+   RESPONSIVE ADJUSTMENTS
+   ============================================== */
+@media (max-width: 480px) {
+    .slide-menu {
+        width: 280px;
+        left: -280px;
+    }
+}
+
+/* ==============================================
+   ACCESSIBILITY
+   ============================================== */
+.menu-item:focus {
+    outline: 2px solid var(--color-primary, #007acc);
+    outline-offset: -2px;
+}
+
+.close-menu-button:focus {
+    outline: 2px solid var(--color-primary, #007acc);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* ==============================================
+   ANIMATIONS
+   ============================================== */
+@keyframes slideIn {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(0);
+    }
+}
+
+@keyframes slideOut {
+    from {
+        transform: translateX(0);
+    }
+    to {
+        transform: translateX(-100%);
+    }
+}
+
+/* Alternative animation approach */
+.slide-menu.animating-in {
+    animation: slideIn 0.3s ease forwards;
+}
+
+.slide-menu.animating-out {
+    animation: slideOut 0.3s ease forwards;
+}
+
+/* ==============================================
+   DEVELOPER MODE VISIBILITY
+   ============================================== */
+/* Hide developer mode menu by default - only show in development */
+/* Using highly specific selectors to ensure override */
+#slide-menu .slide-menu-nav .menu-item[data-action="developer"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    position: absolute !important;
+    left: -9999px !important;
+}
+
+/* Show developer mode menu when explicitly enabled */
+#slide-menu .slide-menu-nav .menu-item[data-action="developer"].dev-mode-visible {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    height: auto !important;
+    padding: 12px 16px !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    position: relative !important;
+    left: auto !important;
+}

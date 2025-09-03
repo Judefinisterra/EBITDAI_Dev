@@ -1,0 +1,8850 @@
+/* global Office, msal */ // Global variables for Office.js and MSAL
+
+// Import chat layout debugger
+import ChatLayoutDebugger from './ChatDebugger.js';
+// Import multiline input handler
+import { multilineInputHandler } from './multiline-input.js';
+
+// Backend and authentication imports removed - standalone mode
+
+// Backend functionality removed - standalone mode
+
+import { populateCodeCollection, exportCodeCollectionToText, runCodes, processAssumptionTabs, collapseGroupingsAndNavigateToFinancials, hideColumnsAndNavigate, handleInsertWorksheetsFromBase64, parseFormulaSCustomFormula } from './CodeCollection.js';
+// >>> ADDED: Import the new validation function
+import { validateCodeStringsForRun } from './Validation.js';
+// >>> ADDED: Import the tab string generator function
+import { generateTabString } from './IndexWorksheet.js';
+// >>> REMOVED: structureDatabasequeries import - now handled internally by getAICallsProcessedResponse
+// import { structureDatabasequeries } from './StructureHelper.js';
+// Set flag to prevent AIcalls.js from managing views when loaded as a module
+window.isTaskpaneMain = true;
+// >>> ADDED: Import setAPIKeys function from AIcalls
+import { setAPIKeys } from './AIcalls.js';
+// >>> ADDED: Import callOpenAI function from AIcalls
+import { callOpenAI } from './AIcalls.js';
+// >>> ADDED: Import conversation history functions from AIcalls
+import { saveConversationHistory, loadConversationHistory } from './AIcalls.js';
+// >>> ADDED: Import prompt loading functions from AIcalls
+import { loadPromptFromFile, getSystemPromptFromFile } from './AIcalls.js';
+// >>> ADDED: Import processPrompt function from AIcalls
+import { processPrompt } from './AIcalls.js';
+// >>> ADDED: Import createEmbedding function from AIcalls
+import { createEmbedding } from './AIcalls.js';
+// >>> ADDED: Import queryVectorDB function from AIcalls
+import { queryVectorDB } from './AIcalls.js';
+// >>> ADDED: Import safeJsonForPrompt function from AIcalls
+import { safeJsonForPrompt } from './AIcalls.js';
+// >>> ADDED: Import conversation handling and validation functions from AIcalls
+// Make sure handleConversation is included here
+import { handleFollowUpConversation, handleInitialConversation, handleConversation, validationCorrection, formatCodeStringsWithGPT, getAICallsProcessedResponse } from './AIcalls.js';
+// >>> ADDED: Import CONFIG for URL management
+import { CONFIG } from './config.js';
+// >>> ADDED: Import file attachment and voice input functionality from AIModelPlanner
+import { initializeFileAttachment, initializeFileAttachmentDev, initializeVoiceInput, initializeVoiceInputDev, initializeTextareaAutoResize, initializeTextareaAutoResizeDev, setAIModelPlannerOpenApiKey, currentAttachedFilesDev, formatFileDataForAIDev, removeAllAttachmentsDev, resetAIModelPlannerConversation, plannerHandleSend } from './AIModelPlanner.js';
+// >>> ADDED: Import cost tracking functionality
+import { trackAPICallCost, estimateTokens } from './CostTracker.js';
+// Add the codeStrings variable with the specified content
+// REMOVED hardcoded codeStrings variable
+
+
+
+//Debugging Toggle
+const DEBUG = false;
+
+// Variable to store loaded code strings
+let loadedCodeStrings = "";
+
+// Variable to store the parsed code database
+let codeDatabase = [];
+
+// API keys storage - initialized by initializeAPIKeys
+let INTERNAL_API_KEYS = {
+  OPENAI_API_KEY: "",
+  PINECONE_API_KEY: ""
+};
+
+// >>> MOVED & MODIFIED: Ensure truly global scope for cursor position
+var lastEditorCursorPosition = null;
+
+// Function to load the code string database
+async function loadCodeDatabase() {
+  try {
+    console.log("Loading code database...");
+    const response = await fetch(CONFIG.getAssetUrl('assets/codestringDB.txt'));
+    if (!response.ok) {
+      throw new Error(`Failed to load codestringDB.txt: ${response.statusText}`);
+    }
+    const text = await response.text();
+    const lines = text.split(/[\r\n]+/).filter(line => line.trim() !== ''); // Split by lines and remove empty ones
+
+    codeDatabase = lines.map(line => {
+      const parts = line.split('\t'); // Assuming tab-separated
+      if (parts.length >= 2) {
+        return { name: parts[0].trim(), code: parts[1].trim() };
+      }
+      console.warn(`Skipping malformed line in codestringDB.txt: ${line}`);
+      return null;
+    }).filter(item => item !== null); // Filter out null entries from malformed lines
+
+    console.log(`Code database loaded successfully with ${codeDatabase.length} entries.`);
+    if (DEBUG && codeDatabase.length > 0) {
+        console.log("First few code database entries:", codeDatabase.slice(0, 5));
+    }
+
+  } catch (error) {
+    console.error("Error loading code database:", error);
+    showError("Failed to load code database. Search functionality will be unavailable.");
+    codeDatabase = []; // Ensure it's empty on error
+  }
+}
+
+// API keys will be loaded from AIcalls.js when needed
+
+// Conversation history storage
+let conversationHistory = [];
+
+// Add this variable to track if the current message is a response
+// Removed isResponse - using isFirstMessageInSession instead
+
+// Track if this is the first message in the current session
+let isFirstMessageInSession = true;
+
+// Function to conditionally show developer mode menu based on environment
+function initializeDeveloperModeVisibility() {
+    // Try multiple selectors to find the developer menu item
+    const selectors = [
+        '[data-action="developer"]',
+        'button[data-action="developer"]',
+        '.menu-item[data-action="developer"]'
+    ];
+    
+    let developerMenuItem = null;
+    for (const selector of selectors) {
+        developerMenuItem = document.querySelector(selector);
+        if (developerMenuItem) break;
+    }
+    
+    if (developerMenuItem) {
+        // Always show developer mode in EBITDAI_Dev
+        // Override inline styles and add class to make it visible
+        developerMenuItem.style.display = 'flex';
+        developerMenuItem.style.visibility = 'visible';
+        developerMenuItem.classList.add('dev-mode-visible');
+    }
+}
+
+// >>> ADDED: State for Client Chat
+let conversationHistoryClient = [];
+let lastResponseClient = null;
+// <<< END ADDED
+
+// Add this variable to store the last response
+let lastResponse = null;
+
+// >>> ADDED: Production Debug System
+let PRODUCTION_DEBUG = false; // Toggle for production debugging - DISABLED FOR CLEAN UI
+let debugContainer = null;
+
+function productionLog(message) {
+    if (!PRODUCTION_DEBUG) return;
+    
+    console.log(message); // Still log to console if available
+    
+    // Also show in UI for production debugging
+    if (!debugContainer) {
+        debugContainer = document.createElement('div');
+        debugContainer.id = 'production-debug';
+        debugContainer.style.cssText = `
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px;
+            font-size: 12px;
+            font-family: monospace;
+            max-width: 300px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 9999;
+            border-radius: 4px;
+        `;
+        document.body.appendChild(debugContainer);
+    }
+    
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = document.createElement('div');
+    logEntry.textContent = `[${timestamp}] ${message}`;
+    debugContainer.appendChild(logEntry);
+    
+    // Keep only last 10 logs
+    while (debugContainer.children.length > 10) {
+        debugContainer.removeChild(debugContainer.firstChild);
+    }
+}
+
+// Add this variable to store the last user input for training data
+let lastUserInput = null;
+
+// Add this variable to store the first user input (conversation starter) for training data
+let firstUserInput = null;
+
+// Add variables to persist training data modal values
+let persistedTrainingUserInput = null;
+let persistedTrainingAiResponse = null;
+
+// Training data modal find/replace state
+let trainingModalSearchableElements = [];
+
+// Training data modal find/replace functions
+function resetTrainingModalSearchState() {
+    trainingModalSearchableElements = [
+        document.getElementById('training-user-input'),
+        document.getElementById('training-ai-response')
+    ].filter(el => el !== null); // Filter out null elements
+    
+    const trainingSearchStatus = document.getElementById('training-search-status');
+    if (trainingSearchStatus) trainingSearchStatus.textContent = '';
+    
+    console.log("Training modal search state reset.");
+}
+
+function updateTrainingModalSearchStatus(message) {
+    const trainingSearchStatus = document.getElementById('training-search-status');
+    if (trainingSearchStatus) {
+        trainingSearchStatus.textContent = message;
+    }
+}
+
+function trainingModalReplaceAll() {
+    const trainingFindInput = document.getElementById('training-find-input');
+    const trainingReplaceInput = document.getElementById('training-replace-input');
+    
+    if (!trainingFindInput || !trainingReplaceInput) {
+        console.error("Training modal find/replace inputs not found");
+        return;
+    }
+    
+    const searchTerm = trainingFindInput.value;
+    const replaceTerm = trainingReplaceInput.value;
+    
+    if (!searchTerm) {
+        updateTrainingModalSearchStatus("Enter search term.");
+        return;
+    }
+
+    // Ensure searchable elements are up-to-date
+    resetTrainingModalSearchState();
+
+    let replacementsMade = 0;
+    trainingModalSearchableElements.forEach((element, index) => {
+        if (!element) return;
+        
+        let currentValue = element.value;
+        // Escape regex special characters in search term
+        const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        let newValue = currentValue.replace(new RegExp(escapedSearchTerm, 'g'), () => {
+            replacementsMade++;
+            return replaceTerm;
+        });
+        if (currentValue !== newValue) {
+            element.value = newValue;
+            console.log(`Training Modal Replace All: Made replacements in element ${index}`);
+        }
+    });
+
+    if (replacementsMade > 0) {
+        updateTrainingModalSearchStatus(`Replaced ${replacementsMade} occurrence(s).`);
+    } else {
+        updateTrainingModalSearchStatus(`"${searchTerm}" not found.`);
+    }
+}
+
+// Add this function at the top level
+function showMessage(message) {
+    const messageDiv = document.createElement('div');
+    messageDiv.style.color = 'green';
+    messageDiv.style.padding = '10px';
+    messageDiv.style.margin = '10px';
+    messageDiv.style.border = '1px solid green';
+    messageDiv.style.borderRadius = '4px';
+    messageDiv.textContent = message;
+    
+    const appBody = document.getElementById('app-body');
+    appBody.insertBefore(messageDiv, appBody.firstChild);
+    
+    // Remove the message after 5 seconds
+    setTimeout(() => {
+        messageDiv.remove();
+    }, 5000);
+}
+
+// Add this function at the top level
+function showError(message) {
+    const errorDiv = document.createElement('div');
+    errorDiv.style.color = 'red';
+    errorDiv.style.padding = '10px';
+    errorDiv.style.margin = '10px';
+    errorDiv.style.border = '1px solid red';
+    errorDiv.style.borderRadius = '4px';
+    errorDiv.textContent = `Error: ${message}`;
+    
+    const appBody = document.getElementById('app-body');
+    appBody.insertBefore(errorDiv, appBody.firstChild);
+    
+    // Remove the error message after 5 seconds
+    setTimeout(() => {
+        errorDiv.remove();
+    }, 5000);
+}
+
+// Add this function at the top level
+function setButtonLoading(isLoading) {
+    console.log(`[setButtonLoading] Called with isLoading: ${isLoading}`);
+    const sendButton = document.getElementById('send');
+    const loadingAnimation = document.getElementById('loading-animation');
+    
+    if (sendButton) {
+        sendButton.disabled = isLoading;
+    } else {
+        console.warn("[setButtonLoading] Could not find send button with id='send'");
+    }
+    
+    if (loadingAnimation) {
+        const newDisplay = isLoading ? 'flex' : 'none';
+        console.log(`[setButtonLoading] Found loadingAnimation element. Setting display to: ${newDisplay}`);
+        loadingAnimation.style.display = newDisplay;
+    } else {
+        console.error("[setButtonLoading] Could not find loading animation element with id='loading-animation'");
+    }
+}
+
+// >>> ADDED: Handle file attachment and conversion for Attach Actuals button
+async function handleAttachActuals() {
+    console.log('[handleAttachActuals] Attach Actuals button clicked');
+    
+    // Create file input element
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.xlsx,.xlsm,.csv';
+    fileInput.style.display = 'none';
+    
+    // Add file input to document
+    document.body.appendChild(fileInput);
+    
+    // Handle file selection
+    fileInput.addEventListener('change', async function(event) {
+        const file = event.target.files[0];
+        if (!file) {
+            console.log('[handleAttachActuals] No file selected');
+            return;
+        }
+        
+        console.log(`[handleAttachActuals] File selected: ${file.name} (${file.type}, ${file.size} bytes)`);
+        
+        try {
+            // Show loading state
+            const attachActualsButton = document.getElementById('attach-actuals-button');
+            if (attachActualsButton) {
+                attachActualsButton.disabled = true;
+                attachActualsButton.innerHTML = '<span class="ms-Button-label">Processing...</span>';
+            }
+            
+            // Read the file
+            const arrayBuffer = await readFileAsArrayBuffer(file);
+            
+            let csvData = '';
+            
+            // Check if it's an Excel file (XLSX or XLSM) or CSV
+            const fileExtension = file.name.toLowerCase().split('.').pop();
+            
+            if (fileExtension === 'xlsx' || fileExtension === 'xlsm') {
+                console.log('[handleAttachActuals] Converting Excel file to CSV...');
+                
+                // Use SheetJS to read the Excel file
+                const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+                
+                // Get the first worksheet
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                
+                // Convert worksheet to CSV
+                csvData = XLSX.utils.sheet_to_csv(worksheet);
+                
+                console.log(`[handleAttachActuals] Excel conversion completed`);
+                
+            } else if (fileExtension === 'csv') {
+                console.log('[handleAttachActuals] File is already CSV, processing...');
+                
+                // File is already CSV, just read as text
+                csvData = new TextDecoder().decode(arrayBuffer);
+                
+            } else {
+                throw new Error('Unsupported file type. Please select an XLSX, XLSM, or CSV file.');
+            }
+            
+            // Process with Claude API
+            console.log('[handleAttachActuals] Sending CSV data to Claude API for ACTUALS code generation...');
+            await processActualsWithClaude(csvData, file.name);
+            
+            console.log(`[handleAttachActuals] File processing completed successfully`);
+            
+        } catch (error) {
+            console.error('[handleAttachActuals] Error processing file:', error);
+            displayActualsError(`Error processing file: ${error.message}`);
+        } finally {
+            // Reset button state
+            const attachActualsButton = document.getElementById('attach-actuals-button');
+            if (attachActualsButton) {
+                attachActualsButton.disabled = false;
+                attachActualsButton.innerHTML = '<span class="ms-Button-label">Attach Actuals</span>';
+            }
+            
+            // Clean up file input
+            document.body.removeChild(fileInput);
+        }
+    });
+    
+    // Trigger file dialog
+    fileInput.click();
+}
+
+// Helper function to read file as ArrayBuffer
+function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            resolve(e.target.result);
+        };
+        reader.onerror = function(e) {
+            reject(new Error('Failed to read file'));
+        };
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+// Extract financial items from code editor content
+function extractFinancialItems() {
+    console.log('[extractFinancialItems] Extracting financial items from code editor...');
+    
+    try {
+        // Get the codes textarea content
+        const codesTextarea = document.getElementById('codes-textarea');
+        if (!codesTextarea) {
+            console.warn('[extractFinancialItems] Could not find codes-textarea element');
+            return [];
+        }
+        
+        const codesContent = codesTextarea.value.trim();
+        if (!codesContent) {
+            console.log('[extractFinancialItems] Codes textarea is empty');
+            return [];
+        }
+        
+        console.log('[extractFinancialItems] Parsing codes content for financial items...');
+        
+        const financialItems = [];
+        
+        // Split content by code boundaries (look for < at start and > at end)
+        const codeMatches = codesContent.match(/<[^>]*>/g);
+        
+        if (!codeMatches) {
+            console.log('[extractFinancialItems] No code patterns found');
+            return [];
+        }
+        
+        console.log(`[extractFinancialItems] Found ${codeMatches.length} code patterns to analyze`);
+        
+        codeMatches.forEach((codeString, index) => {
+            try {
+                // Look for row parameters that contain (F) with a value
+                const rowMatches = codeString.match(/row\d+\s*=\s*"([^"]+)"/g);
+                
+                if (rowMatches) {
+                    rowMatches.forEach(rowMatch => {
+                        // Extract the row content between quotes
+                        const rowContentMatch = rowMatch.match(/row\d+\s*=\s*"([^"]+)"/);
+                        if (rowContentMatch && rowContentMatch[1]) {
+                            const rowContent = rowContentMatch[1];
+                            
+                            // Split by | to get parameters
+                            const parts = rowContent.split('|');
+                            
+                            let labelValue = '';
+                            let fValue = '';
+                            
+                            // Extract (L) and (F) parameters
+                            parts.forEach(part => {
+                                part = part.trim();
+                                if (part.includes('(L)')) {
+                                    // Extract the label before (L)
+                                    labelValue = part.replace('(L)', '').trim();
+                                } else if (part.includes('(F)')) {
+                                    // Extract the F value before (F)
+                                    fValue = part.replace('(F)', '').trim();
+                                }
+                            });
+                            
+                            // If both label and F value exist and F is not empty, add to financial items
+                            if (labelValue && fValue && fValue !== '') {
+                                // Clean up the label (remove ~ symbols and other formatting)
+                                const cleanLabel = labelValue.replace(/^~+/, '').replace(/~+$/, '').trim();
+                                
+                                if (cleanLabel && !financialItems.includes(cleanLabel)) {
+                                    financialItems.push(cleanLabel);
+                                    console.log(`[extractFinancialItems] Found financial item: "${cleanLabel}" with F value: "${fValue}"`);
+                                }
+                            }
+                        }
+                    });
+                }
+            } catch (parseError) {
+                console.warn(`[extractFinancialItems] Error parsing code ${index + 1}:`, parseError);
+            }
+        });
+        
+        console.log(`[extractFinancialItems] Extracted ${financialItems.length} unique financial items:`, financialItems);
+        
+        // Always add fallback categories for items that don't have specific matches
+        const fallbackItems = ["Other Income/(Expense)", "Other Assets", "Other Liabilities"];
+        fallbackItems.forEach(item => {
+            if (!financialItems.includes(item)) {
+                financialItems.push(item);
+            }
+        });
+        
+        console.log(`[extractFinancialItems] Final list with fallback items (${financialItems.length} total):`, financialItems);
+        return financialItems;
+        
+    } catch (error) {
+        console.error('[extractFinancialItems] Error extracting financial items:', error);
+        return [];
+    }
+}
+
+// Process CSV data and generate ACTUALS code directly
+async function processActualsWithClaude(csvData, filename) {
+    try {
+        console.log('[processActualsWithClaude] Processing CSV data and generating ACTUALS code directly...');
+        
+        // Extract financial items from the code editor
+        const financialItems = extractFinancialItems();
+        console.log('[processActualsWithClaude] Extracted financial items:', financialItems);
+        
+        // Prepare system prompt for ACTUALS code generation
+        const systemPrompt = `You are a financial data processing specialist. Convert the provided CSV financial statement data into a single ACTUALS code.
+
+ACTUALS CODE FORMAT: <ACTUALS; values="Description|Amount|Date|Category*Description|Amount|Date|Category*...";>
+
+RULES:
+- Column 1 (Description): Financial line item name
+- Column 2 (Amount): Monetary value (positive for revenue/assets, negative for expenses)  
+- Column 3 (Date): Use provided date, will be auto-converted to month-end
+- Column 4 (Category): DEFAULT to same name as Column 1 (Description). Only use different categories if they exist in the Financial Items list below
+- Use "|" to separate columns, "*" to separate rows
+- IGNORE subtotals (Total Revenue, Total Expenses, etc.)
+- FOCUS ONLY on line items
+- NO explanations or additional text - ONLY output the ACTUALS code
+
+FINANCIAL ITEMS LIST:
+${financialItems.length > 0 ? financialItems.map((item, index) => `${index + 1}. ${item}`).join('\n') : 'None found - use fallback categories: Other Income/(Expense), Other Assets, Other Liabilities'}`;
+
+        console.log('[processActualsWithClaude] Calling Claude API for ACTUALS code generation...');
+        
+        // Import necessary functions from AIcalls.js
+        const { callClaudeAPI, initializeAPIKeys } = await import('./AIcalls.js');
+        
+        // Ensure API keys are initialized
+        await initializeAPIKeys();
+        
+        // Prepare the user message with CSV data
+        const userMessage = `Process this financial data from file "${filename}" and generate the ACTUALS code:\n\n${csvData}`;
+        
+        // Prepare messages for Claude API
+        const messages = [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage }
+        ];
+        
+        console.log('[processActualsWithClaude] Sending request to Claude API...');
+        
+        // Call Claude API
+        let claudeResponse = "";
+        for await (const contentPart of callClaudeAPI(messages, {
+            model: "claude-opus-4-1-20250805",
+            temperature: 0.3,
+            stream: false,
+            caller: "processActualsWithClaude"
+        })) {
+            claudeResponse += contentPart;
+        }
+        
+        console.log('[processActualsWithClaude] Claude API response received');
+        console.log('[processActualsWithClaude] Response:', claudeResponse);
+        
+        // Clean up the response to ensure it's just the ACTUALS code
+        const actualsCode = claudeResponse.trim();
+        
+        // Display result in developer mode
+        displayActualsResult(actualsCode, filename);
+        
+    } catch (error) {
+        console.error('[processActualsWithClaude] Error:', error);
+        throw error; // Re-throw to be caught by the calling function
+    }
+}
+
+// Display ACTUALS processing result in developer mode chat
+function displayActualsResult(actualsCode, filename) {
+    console.log('[displayActualsResult] Displaying ACTUALS result in developer mode');
+    
+    // Update lastResponse global variable so "Insert to Editor" button works
+    lastResponse = actualsCode;
+    console.log('[displayActualsResult] Updated lastResponse for Insert to Editor functionality');
+    
+    // Display the file processing message
+    displayInDeveloperChat(`📄 Processed file: ${filename}`, true);
+    
+    // Display the ACTUALS code result
+    displayInDeveloperChat(actualsCode, false);
+}
+
+// Display error in developer mode chat
+function displayActualsError(errorMessage) {
+    console.log('[displayActualsError] Displaying error in developer mode');
+    
+    // Display the error message
+    displayInDeveloperChat(`❌ ${errorMessage}`, false);
+}
+
+// Display message in developer mode chat
+function displayInDeveloperChat(message, isUser) {
+    const chatLog = document.getElementById('chat-log');
+    const welcomeMessage = document.getElementById('welcome-message');
+    if (welcomeMessage) {
+        welcomeMessage.style.display = 'none';
+    }
+
+    const messageElement = document.createElement('div');
+    messageElement.className = `chat-message ${isUser ? 'user-message' : 'assistant-message'}`;
+    
+    const contentElement = document.createElement('p');
+    contentElement.className = 'message-content';
+    
+    if (typeof message === 'string') {
+        contentElement.textContent = message;
+    } else if (Array.isArray(message)) {
+        contentElement.textContent = message.join('\n');
+    } else if (typeof message === 'object' && message !== null) {
+        contentElement.textContent = JSON.stringify(message, null, 2);
+        contentElement.style.whiteSpace = 'pre-wrap'; 
+    } else {
+        contentElement.textContent = String(message);
+    }
+    
+    messageElement.appendChild(contentElement);
+    chatLog.appendChild(messageElement);
+    chatLog.scrollTop = chatLog.scrollHeight;
+}
+// <<< END ADDED
+
+// >>> ADDED: setButtonLoading for Client Mode
+function setButtonLoadingClient(isLoading) {
+    console.log(`[setButtonLoadingClient] Called with isLoading: ${isLoading}`);
+    const sendButton = document.getElementById('send-client');
+    const loadingAnimation = document.getElementById('loading-animation-client');
+    
+    if (sendButton) {
+        sendButton.disabled = isLoading;
+    } else {
+        console.warn("[setButtonLoadingClient] Could not find send button with id='send-client'");
+    }
+    
+    if (loadingAnimation) {
+        const newDisplay = isLoading ? 'flex' : 'none';
+        console.log(`[setButtonLoadingClient] Found loadingAnimation element. Setting display to: ${newDisplay}`);
+        loadingAnimation.style.display = newDisplay;
+    } else {
+        console.error("[setButtonLoadingClient] Could not find loading animation element with id='loading-animation-client'");
+    }
+}
+// <<< END ADDED
+
+// Add this function to write to Excel
+async function writeToExcel() {
+    if (!lastResponse) {
+        showError('No response to write to Excel');
+        return;
+    }
+
+    try {
+        await Excel.run(async (context) => {
+            const range = context.workbook.getSelectedRange();
+            range.load("rowIndex");
+            range.load("columnIndex");
+            await context.sync();
+            
+            const startRow = range.rowIndex;
+            const startCol = range.columnIndex;
+            
+            // Split the response into individual code strings
+            let codeStrings = [];
+            if (Array.isArray(lastResponse)) {
+                // Join the array elements and then split by brackets
+                const fullText = lastResponse.join(' ');
+                codeStrings = fullText.match(/<[^>]+>/g) || [];
+            } else if (typeof lastResponse === 'string') {
+                codeStrings = lastResponse.match(/<[^>]+>/g) || [];
+            }
+            
+            if (codeStrings.length === 0) {
+                throw new Error("No valid code strings found in response");
+            }
+            
+            // Create a range that spans all the rows we need
+            const targetRange = range.worksheet.getRangeByIndexes(
+                startRow,
+                startCol,
+                codeStrings.length,
+                1
+            );
+            
+            // Set all values at once, with each code string in its own row
+            targetRange.values = codeStrings.map(str => [str]);
+            
+            await context.sync();
+            console.log("Response written to Excel");
+        });
+    } catch (error) {
+        console.error("Error writing to Excel:", error);
+        showError(error.message);
+    }
+}
+
+// Add this function to append messages to the chat log
+// >>> REFACTORED: to accept chatLogId and welcomeMessageId
+function appendMessage(content, isUser = false, chatLogId = 'chat-log', welcomeMessageId = 'welcome-message') {
+    const chatLog = document.getElementById(chatLogId);
+    const welcomeMessage = document.getElementById(welcomeMessageId);
+
+    if (!chatLog) {
+        console.error(`[appendMessage] Chat log element with ID '${chatLogId}' not found.`);
+        return;
+    }
+    
+    // Hide welcome message when first message is added
+    if (welcomeMessage) {
+        welcomeMessage.style.display = 'none';
+    }
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `chat-message ${isUser ? 'user-message' : 'assistant-message'}`;
+    
+    const messageContent = document.createElement('p');
+    messageContent.className = 'message-content';
+    messageContent.textContent = content;
+    
+    messageDiv.appendChild(messageContent);
+    chatLog.appendChild(messageDiv);
+    
+    // Scroll to bottom
+    chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+// Modify the handleSend function
+async function handleSend() {
+    let userInput = document.getElementById('user-input').value.trim();
+    
+    // Check if there are attached files and include them in the prompt
+    if (currentAttachedFilesDev.length > 0) {
+        console.log('[handleSend] Including attached files data:', currentAttachedFilesDev.map(f => f.fileName).join(', '));
+        const filesDataForAI = formatFileDataForAIDev(currentAttachedFilesDev);
+        userInput = userInput + filesDataForAI;
+    }
+    
+    if (!userInput) {
+        showError('Please enter a request');
+        return;
+    }
+
+    // Store the user input for training data before clearing
+    lastUserInput = userInput;
+    
+    // Store the first user input if this is the start of the conversation
+    if (isFirstMessageInSession) {
+        firstUserInput = userInput;
+    }
+
+    // Check if this is the first message in the session by looking at visible chat messages BEFORE adding the new message
+    const chatLog = document.getElementById('chat-log');
+    const existingMessages = chatLog ? chatLog.querySelectorAll('.chat-message') : [];
+    isFirstMessageInSession = existingMessages.length === 0;
+    console.log(`[handleSend] Found ${existingMessages.length} existing chat messages. isFirstMessageInSession: ${isFirstMessageInSession}`);
+
+    // Add user message to chat (include file attachment info in display)
+    let displayMessage = document.getElementById('user-input').value.trim();
+    if (currentAttachedFilesDev.length > 0) {
+        const fileNames = currentAttachedFilesDev.map(f => f.fileName).join(', ');
+        displayMessage += ` 📎 (${currentAttachedFilesDev.length} file${currentAttachedFilesDev.length !== 1 ? 's' : ''}: ${fileNames})`;
+    }
+    appendMessage(displayMessage, true);
+    
+    // Clear input and reset textarea height
+    const userInputElement = document.getElementById('user-input');
+    userInputElement.value = '';
+    userInputElement.style.height = '24px';
+    userInputElement.classList.remove('scrollable');
+    
+    // Clear attachments after sending
+    removeAllAttachmentsDev();
+
+    setButtonLoading(true);
+    const progressMessageDiv = document.createElement('div');
+    progressMessageDiv.className = 'chat-message assistant-message';
+    const progressMessageContent = document.createElement('p');
+    progressMessageContent.className = 'message-content';
+    progressMessageContent.textContent = 'Analyzing your request...';
+    progressMessageDiv.appendChild(progressMessageContent);
+    chatLog.appendChild(progressMessageDiv);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    
+    try {
+        let conversationResult;
+        
+        if (isFirstMessageInSession) {
+            // First message in conversation: Use self-contained getAICallsProcessedResponse
+            console.log("Starting getAICallsProcessedResponse (initial - with prompt module determination)");
+            
+            // Create progress callback function
+            const progressCallback = (message) => {
+                console.log("Progress:", message);
+                progressMessageContent.textContent = message;
+                chatLog.scrollTop = chatLog.scrollHeight;
+            };
+            
+            // Set initial progress message
+            progressMessageContent.textContent = 'Processing with AI (including database queries and prompt module analysis)...';
+            chatLog.scrollTop = chatLog.scrollHeight;
+            
+            // Use the self-contained function that handles all processing internally
+            const responseArray = await getAICallsProcessedResponse(userInput, progressCallback);
+            
+            // Create conversation result compatible with existing code
+            conversationResult = {
+                response: responseArray,
+                history: [...conversationHistory, ['human', userInput], ['assistant', responseArray.join('\n')]]
+            };
+        } else {
+            // Follow-up conversation: skip database queries, use simple prompt
+            console.log("Starting handleConversation (follow-up - no database queries)");
+            progressMessageContent.textContent = 'Processing follow-up response...';
+            chatLog.scrollTop = chatLog.scrollHeight;
+            
+            conversationResult = await handleConversation(userInput, conversationHistory);
+        }
+        console.log("Conversation completed");
+        console.log("Initial Conversation Result:", conversationResult); // Log the whole object
+
+        // Extract the response array and update history
+        let responseArray = conversationResult.response;
+        conversationHistory = conversationResult.history; // Update global history if needed (check AIcalls.js if it manages history internally)
+
+        // Validate the extracted response array
+        if (!responseArray || !Array.isArray(responseArray)) {
+            console.error("Invalid response array extracted:", responseArray);
+            throw new Error("Failed to get valid response array from conversation result");
+        }
+
+        // >>> REMOVED: Redundant FormatGPT call - FormatGPT is already called within handleInitialConversation() in AIcalls.js
+        // This was causing FormatGPT to be called twice for initial conversations
+        console.log("FormatGPT is handled within the conversation flow in AIcalls.js");
+
+        // Update progress message to show completion
+        progressMessageContent.textContent = 'Finalizing response...';
+        chatLog.scrollTop = chatLog.scrollHeight;
+
+        // Store the final response array for Excel writing
+        lastResponse = responseArray;
+
+        // Mark that we've processed the first message in this session
+        isFirstMessageInSession = false;
+
+        // Remove the progress message and add the final assistant message
+        chatLog.removeChild(progressMessageDiv);
+        appendMessage(responseArray.join('\n'));
+        
+    } catch (error) {
+        console.error("Error in handleSend:", error);
+        showError(error.message);
+        // Remove progress message and add error message to chat
+        if (chatLog.contains(progressMessageDiv)) {
+            chatLog.removeChild(progressMessageDiv);
+        }
+        appendMessage(`Error: ${error.message}`);
+    } finally {
+        setButtonLoading(false);
+    }
+}
+
+// >>> ADDED: handleSend for Client Mode (Simplified)
+async function handleSendClient() {
+            // Disabled - CSS flexbox layout handles everything now
+        // if (window.chatDebugger) {
+        //     window.chatDebugger.forceFix();
+        // }
+    
+    const userInputElement = document.getElementById('user-input-client');
+    if (!userInputElement) {
+        console.error("[handleSendClient] User input element 'user-input-client' not found.");
+        return;
+    }
+    const userInput = userInputElement.value.trim();
+    
+    if (!userInput) {
+        showError('Please enter a request'); 
+        return;
+    }
+
+    // Store the user input for training data before clearing
+    lastUserInput = userInput;
+    
+    // Store the first user input if this is the start of the conversation in client mode
+    if (conversationHistoryClient.length === 0) {
+        firstUserInput = userInput;
+    }
+
+    // >>> ADDED: Hide welcome section and activate conversation layout on first message
+    const welcomeSection = document.querySelector('.welcome-section');
+    const clientChatContainer = document.getElementById('client-chat-container');
+    const chatLogClient = document.getElementById('chat-log-client');
+    
+    // Always add conversation-active class when sending a message
+    if (clientChatContainer) {
+        clientChatContainer.classList.add('conversation-active');
+        console.log('[sendToAPIClient] Added conversation-active class to hide welcome section');
+    }
+    
+    // Force hide welcome section as backup
+    if (welcomeSection) {
+        welcomeSection.style.display = 'none';
+    }
+    
+    // Force show chat log as backup
+    if (chatLogClient) {
+        chatLogClient.style.display = 'block';
+    }
+    // <<< END ADDED
+
+    // Append user's message to the chat log
+    appendMessage(userInput, true, 'chat-log-client', 'welcome-message-client');
+    userInputElement.value = ''; // Clear the input field
+    
+    // Reset textarea height to default
+    userInputElement.style.height = 'auto';
+    userInputElement.classList.remove('scrollable');
+    // Remove expanded class from input bar
+    const inputBar = userInputElement.closest('.chatgpt-input-bar');
+    inputBar?.classList.remove('expanded');
+    // Trigger resize to ensure proper height
+    const event = new Event('input', { bubbles: true });
+    userInputElement.dispatchEvent(event);
+    
+    // Credits gate: if user cannot use features, stream an upgrade message and return
+    try {
+        if (typeof canUseFeatures === 'function' && !canUseFeatures()) {
+            // Ensure conversation layout is active
+            const welcomeSection = document.querySelector('.welcome-section');
+            const clientChatContainer = document.getElementById('client-chat-container');
+            const chatLogClient = document.getElementById('chat-log-client');
+            if (clientChatContainer) clientChatContainer.classList.add('conversation-active');
+            if (welcomeSection) welcomeSection.style.display = 'none';
+            if (chatLogClient) chatLogClient.style.display = 'block';
+
+            // Append user's message as normal
+            appendMessage(userInput, true, 'chat-log-client', 'welcome-message-client');
+
+            // Append assistant response styled as normal
+            if (chatLogClient) {
+                const assistantMessageDiv = document.createElement('div');
+                assistantMessageDiv.className = 'chat-message assistant-message';
+                const assistantMessageContent = document.createElement('p');
+                assistantMessageContent.className = 'message-content';
+                assistantMessageDiv.appendChild(assistantMessageContent);
+                chatLogClient.appendChild(assistantMessageDiv);
+                chatLogClient.scrollTop = chatLogClient.scrollHeight;
+
+                const parts = [
+                    'You are out of credits. ',
+                    'Please upgrade to a new plan in order to continue modeling with EBITDAI. ',
+                    'You can view our different plans at ',
+                ];
+                for (const part of parts) {
+                    await new Promise(r => setTimeout(r, 50));
+                    assistantMessageContent.textContent += part;
+                    chatLogClient.scrollTop = chatLogClient.scrollHeight;
+                }
+                const link = document.createElement('a');
+                link.href = 'https://ebitdai.co/credits';
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = 'ebitdai.co/credits';
+                assistantMessageContent.appendChild(link);
+            }
+
+            // Clear input and stop processing
+            userInputElement.value = '';
+            userInputElement.style.height = 'auto';
+            userInputElement.classList.remove('scrollable');
+            // Remove expanded class from input bar
+            const inputBar = userInputElement.closest('.chatgpt-input-bar');
+            inputBar?.classList.remove('expanded');
+            // Trigger resize to ensure proper height
+            const event = new Event('input', { bubbles: true });
+            userInputElement.dispatchEvent(event);
+            return;
+        }
+    } catch (e) {
+        console.warn('[handleSendClient] credits gate check failed:', e);
+    }
+
+    setButtonLoadingClient(true);
+
+    // Get the chat log and welcome message elements
+    const welcomeMessageClient = document.getElementById('welcome-message-client');
+
+    if (!chatLogClient) {
+        console.error("[handleSendClient] Chat log element 'chat-log-client' not found.");
+        setButtonLoadingClient(false);
+        return;
+    }
+
+    // Hide welcome message if it's visible
+    if (welcomeMessageClient) {
+        welcomeMessageClient.style.display = 'none';
+    }
+
+    // Create assistant's message container
+    const assistantMessageDiv = document.createElement('div');
+    assistantMessageDiv.className = 'chat-message assistant-message';
+    const assistantMessageContent = document.createElement('p');
+    assistantMessageContent.className = 'message-content';
+    assistantMessageContent.textContent = ''; // Start with empty content
+    assistantMessageDiv.appendChild(assistantMessageContent);
+    chatLogClient.appendChild(assistantMessageDiv);
+    chatLogClient.scrollTop = chatLogClient.scrollHeight; // Scroll to bottom
+
+    let fullAssistantResponse = "";
+
+    try {
+        // Prepare messages for OpenAI API
+        // Add current user input. For a more complete conversation, you'd include previous messages from conversationHistoryClient
+        const messages = [
+            // Example: Add system prompt if you have one
+            // { role: "system", content: "You are a helpful assistant." },
+            ...conversationHistoryClient.map(item => ({ role: "user", content: item.user })),
+            ...conversationHistoryClient.map(item => ({ role: "assistant", content: item.assistant })),
+            { role: "user", content: userInput }
+        ];
+        
+        console.log("[handleSendClient] Calling OpenAI with stream enabled. Messages:", messages);
+
+        // Call Claude API with streaming
+        // Using Claude 4 via callOpenAI (configured in AIcalls.js)
+        const stream = await callOpenAI(messages, { stream: true, model: "claude-opus-4-1-20250805", useClaudeAPI: true });
+
+        for await (const chunk of stream) {
+            const content = chunk.choices && chunk.choices[0]?.delta?.content;
+            if (content) {
+                fullAssistantResponse += content;
+                assistantMessageContent.textContent += content; // Append new content
+                chatLogClient.scrollTop = chatLogClient.scrollHeight; // Keep scrolling to bottom
+            }
+        }
+
+        lastResponseClient = fullAssistantResponse;
+        conversationHistoryClient.push({ user: userInput, assistant: fullAssistantResponse });
+
+        console.log("[handleSendClient] Streaming finished. Full response:", fullAssistantResponse);
+
+    } catch (error) {
+        console.error("Error in handleSendClient during OpenAI call:", error);
+        // Display error in the assistant's message bubble or a separate error message
+        assistantMessageContent.textContent = `Error: ${error.message || 'Failed to get response'}`;
+        // Also log to general error display if available
+        showError(`Client mode error: ${error.message}`);
+    } finally {
+        setButtonLoadingClient(false);
+    }
+}
+// <<< END ADDED
+
+// Add this function to reset the chat
+function resetChat() {
+    // Clear the chat log
+    const chatLog = document.getElementById('chat-log');
+    chatLog.innerHTML = '';
+    
+    // Restore welcome message
+    const welcomeMessage = document.createElement('div');
+    welcomeMessage.id = 'welcome-message';
+    welcomeMessage.className = 'welcome-message';
+    const welcomeTitle = document.createElement('h1');
+    welcomeTitle.textContent = 'What would you like to model?';
+    welcomeMessage.appendChild(welcomeTitle);
+    chatLog.appendChild(welcomeMessage);
+    
+    // Clear the conversation history
+    conversationHistory = [];
+    saveConversationHistory(conversationHistory);
+    
+    // Reset the last response
+    lastResponse = null;
+    
+    // Reset the session tracking
+    isFirstMessageInSession = true;
+    
+    // Reset the stored user inputs
+    firstUserInput = null;
+    lastUserInput = null;
+    
+    // Clear persisted training data modal values
+    persistedTrainingUserInput = null;
+    persistedTrainingAiResponse = null;
+    
+    // Clear the input field and reset textarea height
+    const userInputElement = document.getElementById('user-input');
+    userInputElement.value = '';
+    userInputElement.style.height = '24px';
+    userInputElement.classList.remove('scrollable');
+    
+    console.log("Chat reset completed");
+}
+
+// >>> ADDED: resetChat for Client Mode
+function resetChatClient() {
+    const chatLogClient = document.getElementById('chat-log-client');
+    const welcomeMessageClient = document.getElementById('welcome-message-client');
+    const welcomeSection = document.querySelector('.welcome-section');
+    const clientChatContainer = document.getElementById('client-chat-container');
+    const userInputClient = document.getElementById('user-input-client');
+
+    if (chatLogClient) {
+        chatLogClient.innerHTML = '';
+        if (welcomeMessageClient) {
+            chatLogClient.appendChild(welcomeMessageClient);
+            welcomeMessageClient.style.display = 'none';
+        }
+    }
+
+    // Show the welcome section again
+    if (welcomeSection) {
+        welcomeSection.style.display = 'flex';
+    }
+
+    if (clientChatContainer) {
+        clientChatContainer.classList.remove('conversation-active');
+    }
+
+    if (userInputClient) {
+        userInputClient.value = '';
+        userInputClient.style.height = 'auto'; // Reset to auto height
+        userInputClient.classList.remove('scrollable');
+        // Remove expanded class from input bar
+        const inputBar = userInputClient.closest('.chatgpt-input-bar');
+        inputBar?.classList.remove('expanded');
+        // Trigger resize to ensure proper height
+        const event = new Event('input', { bubbles: true });
+        userInputClient.dispatchEvent(event);
+    }
+
+    // Reset conversation history for client mode
+    conversationHistoryClient = [];
+    lastResponseClient = null;
+    
+    // Reset AI Model Planner conversation history as well
+    resetAIModelPlannerConversation();
+    
+    // Reset the stored user inputs for client mode too
+    firstUserInput = null;
+    lastUserInput = null;
+    
+    // Clear persisted training data modal values
+    persistedTrainingUserInput = null;
+    persistedTrainingAiResponse = null;
+    
+    console.log("Client mode chat reset.");
+}
+// <<< END ADDED
+
+
+
+// Helper function to find max driver numbers in existing text
+function getMaxDriverNumbers(text) {
+    const maxNumbers = {};
+    // UPDATED Regex: Handle both old format (V1|) and new format with labels (V1(D)|)
+    // Pattern matches: row1="V1(D)|" or row1="V1|"
+    const regex = /row\d+\s*=\s*"([A-Z]+)(\d*)(\([^)]+\))?\|/g;
+    let match;
+    console.log("Scanning text for drivers:", text.substring(0, 200) + "..."); // Log input text
+
+    while ((match = regex.exec(text)) !== null) {
+        const prefix = match[1];
+        const numberStr = match[2];
+        const label = match[3]; // This will be undefined for old format, or "(D)" etc. for new format
+        const number = numberStr ? parseInt(numberStr, 10) : 0;
+        console.log(`Found driver match: prefix='${prefix}', numberStr='${numberStr}', number=${number}, label='${label || 'none'}'`); // Log each match
+
+        if (isNaN(number)) {
+             console.warn(`Parsed NaN for number from '${numberStr}' for prefix '${prefix}'. Skipping.`);
+             continue;
+        }
+
+        // Create a composite key for prefixes with labels
+        const key = label ? `${prefix}${label}` : prefix;
+        if (!maxNumbers[key] || number > maxNumbers[key]) {
+            maxNumbers[key] = number;
+            console.log(`Updated max for '${key}' to ${number}`); // Log updates
+        }
+    }
+    if (Object.keys(maxNumbers).length === 0) {
+        console.log("No existing drivers found matching the pattern.");
+    }
+    console.log("Final max existing driver numbers:", maxNumbers);
+    return maxNumbers;
+}
+
+// >>> ADDED: AI Editor functionality
+let currentBackup = null; // Store the current backup
+
+async function executeAIEditor() {
+    try {
+        const codesTextarea = document.getElementById('codes-textarea');
+        const aiEditorModal = document.getElementById('ai-editor-modal');
+        const aiEditorInstructions = document.getElementById('ai-editor-instructions');
+        const aiEditorBackupOption = document.getElementById('ai-editor-backup-option');
+        const restoreBackupButton = document.getElementById('restore-backup-button');
+        
+        const currentContent = codesTextarea.value;
+        const userInstructions = aiEditorInstructions.value.trim();
+        
+        if (!userInstructions) {
+            showError('Please enter instructions for what changes you want to make.');
+            aiEditorInstructions.focus();
+            return;
+        }
+
+        // Show loading state
+        const aiEditorExecuteButton = document.getElementById('ai-editor-execute-button');
+        aiEditorExecuteButton.innerHTML = '<span class="ms-Button-label">🔄 Processing...</span>';
+        aiEditorExecuteButton.disabled = true;
+
+        // Keep backup if option is checked
+        if (aiEditorBackupOption.checked) {
+            currentBackup = currentContent;
+            console.log('[AI Editor] Original content backed up');
+        }
+
+        // Load code editor system prompt
+        const codeEditorSystemPrompt = await loadCodeEditorSystemPrompt();
+        
+        // Prepare messages for Claude API with both content and instructions
+        const userMessage = `CURRENT CODE CONTENT:
+${currentContent}
+
+USER INSTRUCTIONS:
+${userInstructions}
+
+Please apply the requested changes to the code content and return the modified version.`;
+
+        const messages = [
+            {
+                role: "system",
+                content: codeEditorSystemPrompt
+            },
+            {
+                role: "user", 
+                content: userMessage
+            }
+        ];
+
+        console.log('[AI Editor] Sending request to Claude API...');
+        
+        // Call Claude API using existing callClaudeAPI function
+        const { callClaudeAPI } = await import('./AIcalls.js');
+        
+        let response = '';
+        for await (const contentPart of callClaudeAPI(messages, {
+            model: "claude-opus-4-1-20250805",
+            temperature: 0.3,
+            stream: false,
+            caller: "executeAIEditor"
+        })) {
+            response += contentPart;
+        }
+
+        if (response.trim()) {
+            // Replace content in code editor
+            codesTextarea.value = response.trim();
+            
+            // Trigger input event to ensure autopopulate continues working
+            const inputEvent = new Event('input', { bubbles: true, cancelable: true });
+            codesTextarea.dispatchEvent(inputEvent);
+            
+            // Show restore button if backup was created
+            if (currentBackup && restoreBackupButton) {
+                restoreBackupButton.style.display = 'inline-flex';
+            }
+            
+            console.log('[AI Editor] Code content successfully modified');
+            aiEditorModal.style.display = 'none';
+            
+            // Show success message
+            showMessage('AI Editor successfully applied your changes!');
+        } else {
+            throw new Error('Empty response from Claude API');
+        }
+
+    } catch (error) {
+        console.error('[AI Editor] Error:', error);
+        showError('Failed to apply AI edits: ' + error.message);
+    } finally {
+        // Reset button state
+        const aiEditorExecuteButton = document.getElementById('ai-editor-execute-button');
+        if (aiEditorExecuteButton) {
+            aiEditorExecuteButton.innerHTML = '<span class="ms-Button-label">🤖 Apply Changes</span>';
+            aiEditorExecuteButton.disabled = false;
+        }
+    }
+}
+
+function restoreFromBackup() {
+    if (!currentBackup) {
+        showError('No backup available to restore.');
+        return;
+    }
+
+    const codesTextarea = document.getElementById('codes-textarea');
+    const restoreBackupButton = document.getElementById('restore-backup-button');
+    
+    if (codesTextarea) {
+        codesTextarea.value = currentBackup;
+        currentBackup = null; // Clear backup after restore
+        
+        // Trigger input event to ensure autopopulate continues working
+        const inputEvent = new Event('input', { bubbles: true, cancelable: true });
+        codesTextarea.dispatchEvent(inputEvent);
+        
+        if (restoreBackupButton) {
+            restoreBackupButton.style.display = 'none';
+        }
+        
+        showMessage('Content restored from backup successfully!');
+        console.log('[AI Editor] Content restored from backup');
+    }
+}
+
+async function loadCodeEditorSystemPrompt() {
+    try {
+        console.log('[AI Editor] Attempting to load code editor system prompt...');
+        
+        // Use CONFIG.getAssetUrl like other parts of the codebase
+        const { CONFIG } = await import('./config.js');
+        
+        // Try the standard CONFIG path first, then fallbacks
+        const possiblePaths = [
+            'prompts/CodeEditor_System.txt', // Webpack copies to dist/prompts/
+            CONFIG.getAssetUrl('src/prompts/CodeEditor_System.txt'),
+            '../prompts/CodeEditor_System.txt',
+            './prompts/CodeEditor_System.txt'
+        ];
+        
+        let response = null;
+        let successfulPath = null;
+        
+        for (const path of possiblePaths) {
+            try {
+                console.log(`[AI Editor] Trying path: ${path}`);
+                response = await fetch(path);
+                if (response.ok) {
+                    successfulPath = path;
+                    break;
+                }
+            } catch (err) {
+                console.log(`[AI Editor] Failed to fetch from ${path}:`, err.message);
+            }
+        }
+        
+        if (!response || !response.ok) {
+            throw new Error('Failed to load code editor system prompt from any path');
+        }
+        
+        const content = await response.text();
+        console.log(`[AI Editor] Successfully loaded system prompt from: ${successfulPath}`);
+        console.log(`[AI Editor] System prompt length: ${content.length} characters`);
+        
+        return content;
+    } catch (error) {
+        console.error('[AI Editor] Failed to load system prompt:', error);
+        // Fallback to a basic prompt if file loading fails
+        console.warn('[AI Editor] Using fallback system prompt');
+        return "You are a financial model code editor. Apply the user's requested changes to the provided code content and return the modified version.";
+    }
+}
+// <<< END ADDED
+
+// >>> ADDED: Training Data Voice Recording functionality
+let mediaRecorderTraining = null;
+let audioChunksTraining = [];
+let audioContextTraining = null;
+let analyserTraining = null;
+let waveformAnimationIdTraining = null;
+let recordingStartTimeTraining = null;
+let recordingTimerIntervalTraining = null;
+let currentTrainingTarget = null; // 'user' or 'ai'
+
+// Initialize training data voice recording event handlers
+function initializeTrainingVoiceRecording() {
+    // Voice buttons
+    const voiceInputTrainingUser = document.getElementById('voice-input-training-user');
+    const voiceInputTrainingAI = document.getElementById('voice-input-training-ai');
+    
+    // Cancel and accept buttons for user input
+    const cancelVoiceRecordingTrainingUser = document.getElementById('cancel-voice-recording-training-user');
+    const acceptVoiceRecordingTrainingUser = document.getElementById('accept-voice-recording-training-user');
+    
+    // Cancel and accept buttons for AI response
+    const cancelVoiceRecordingTrainingAI = document.getElementById('cancel-voice-recording-training-ai');
+    const acceptVoiceRecordingTrainingAI = document.getElementById('accept-voice-recording-training-ai');
+    
+    if (voiceInputTrainingUser) {
+        voiceInputTrainingUser.onclick = () => {
+            currentTrainingTarget = 'user';
+            startVoiceRecordingTraining();
+        };
+    }
+    
+    if (voiceInputTrainingAI) {
+        voiceInputTrainingAI.onclick = () => {
+            currentTrainingTarget = 'ai';
+            startVoiceRecordingTraining();
+        };
+    }
+    
+    if (cancelVoiceRecordingTrainingUser) {
+        cancelVoiceRecordingTrainingUser.onclick = () => {
+            currentTrainingTarget = 'user';
+            stopVoiceRecordingTraining();
+        };
+    }
+    
+    if (acceptVoiceRecordingTrainingUser) {
+        acceptVoiceRecordingTrainingUser.onclick = () => {
+            currentTrainingTarget = 'user';
+            if (mediaRecorderTraining && mediaRecorderTraining.state === 'recording') {
+                mediaRecorderTraining.stop();
+            }
+        };
+    }
+    
+    if (cancelVoiceRecordingTrainingAI) {
+        cancelVoiceRecordingTrainingAI.onclick = () => {
+            currentTrainingTarget = 'ai';
+            stopVoiceRecordingTraining();
+        };
+    }
+    
+    if (acceptVoiceRecordingTrainingAI) {
+        acceptVoiceRecordingTrainingAI.onclick = () => {
+            currentTrainingTarget = 'ai';
+            if (mediaRecorderTraining && mediaRecorderTraining.state === 'recording') {
+                mediaRecorderTraining.stop();
+            }
+        };
+    }
+}
+
+async function startVoiceRecordingTraining() {
+    try {
+        console.log('[Voice-Training] Requesting microphone access...');
+        
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 44100
+            } 
+        });
+        
+        console.log('[Voice-Training] Microphone access granted');
+        
+        // Switch to recording mode
+        switchToRecordingModeTraining();
+        
+        // Setup audio context for waveform visualization
+        audioContextTraining = new (window.AudioContext || window.webkitAudioContext)();
+        analyserTraining = audioContextTraining.createAnalyser();
+        const source = audioContextTraining.createMediaStreamSource(stream);
+        source.connect(analyserTraining);
+        
+        // Configure analyser
+        analyserTraining.fftSize = 1024;
+        analyserTraining.smoothingTimeConstant = 0.3;
+        analyserTraining.minDecibels = -90;
+        analyserTraining.maxDecibels = -10;
+        
+        // Start waveform animation
+        drawWaveformTraining();
+        
+        // Create MediaRecorder
+        const options = { mimeType: 'audio/webm;codecs=opus' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'audio/webm';
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options.mimeType = 'audio/mp4';
+            }
+        }
+        
+        mediaRecorderTraining = new MediaRecorder(stream, options);
+        audioChunksTraining = [];
+        
+        mediaRecorderTraining.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunksTraining.push(event.data);
+            }
+        };
+        
+        mediaRecorderTraining.onstop = async () => {
+            console.log('[Voice-Training] Recording stopped');
+            
+            // Stop all tracks
+            stream.getTracks().forEach(track => track.stop());
+            
+            // Create audio blob
+            const audioBlob = new Blob(audioChunksTraining, { type: 'audio/webm' });
+            console.log('[Voice-Training] Audio blob created, size:', audioBlob.size);
+            
+            // Show loading state
+            switchToLoadingModeTraining();
+            
+            // Transcribe audio
+            await transcribeAudioTraining(audioBlob);
+        };
+        
+        // Start recording
+        mediaRecorderTraining.start();
+        recordingStartTimeTraining = Date.now();
+        
+        // Start timer
+        updateRecordingTimerTraining();
+        recordingTimerIntervalTraining = setInterval(updateRecordingTimerTraining, 100);
+        
+        console.log('[Voice-Training] Recording started');
+        
+    } catch (error) {
+        console.error('[Voice-Training] Error starting recording:', error);
+        showError('Failed to access microphone. Please check your permissions.');
+        switchToNormalModeTraining();
+    }
+}
+
+function stopVoiceRecordingTraining() {
+    console.log('[Voice-Training] Stopping recording...');
+    
+    // Stop waveform animation
+    if (waveformAnimationIdTraining) {
+        cancelAnimationFrame(waveformAnimationIdTraining);
+        waveformAnimationIdTraining = null;
+    }
+    
+    // Stop timer
+    if (recordingTimerIntervalTraining) {
+        clearInterval(recordingTimerIntervalTraining);
+        recordingTimerIntervalTraining = null;
+    }
+    
+    // Stop recording
+    if (mediaRecorderTraining && mediaRecorderTraining.state === 'recording') {
+        mediaRecorderTraining.stop();
+    }
+    
+    // Close audio context
+    if (audioContextTraining) {
+        audioContextTraining.close();
+        audioContextTraining = null;
+    }
+    
+    // Switch back to normal mode
+    switchToNormalModeTraining();
+    
+    // Reset variables
+    recordingStartTimeTraining = null;
+}
+
+function switchToRecordingModeTraining() {
+    const voiceRecordingMode = document.getElementById(`voice-recording-mode-training-${currentTrainingTarget}`);
+    if (voiceRecordingMode) {
+        voiceRecordingMode.style.display = 'block';
+    }
+}
+
+function switchToLoadingModeTraining() {
+    // Hide recording mode
+    const voiceRecordingMode = document.getElementById(`voice-recording-mode-training-${currentTrainingTarget}`);
+    if (voiceRecordingMode) {
+        voiceRecordingMode.style.display = 'none';
+    }
+    
+    // Show loading mode
+    const transcriptionLoadingMode = document.getElementById(`transcription-loading-mode-training-${currentTrainingTarget}`);
+    if (transcriptionLoadingMode) {
+        transcriptionLoadingMode.style.display = 'block';
+    }
+}
+
+function switchToNormalModeTraining() {
+    // Hide all modes
+    const voiceRecordingMode = document.getElementById(`voice-recording-mode-training-${currentTrainingTarget}`);
+    const transcriptionLoadingMode = document.getElementById(`transcription-loading-mode-training-${currentTrainingTarget}`);
+    
+    if (voiceRecordingMode) {
+        voiceRecordingMode.style.display = 'none';
+    }
+    if (transcriptionLoadingMode) {
+        transcriptionLoadingMode.style.display = 'none';
+    }
+}
+
+function updateRecordingTimerTraining() {
+    if (!recordingStartTimeTraining) return;
+    
+    const elapsed = Math.floor((Date.now() - recordingStartTimeTraining) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    const timeString = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    
+    const timer = document.getElementById(`voice-recording-timer-training-${currentTrainingTarget}`);
+    if (timer) {
+        timer.textContent = timeString;
+    }
+}
+
+function drawWaveformTraining() {
+    if (!analyserTraining) return;
+    
+    const canvas = document.getElementById(`voice-waveform-training-${currentTrainingTarget}`);
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    const bufferLength = analyserTraining.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    const draw = () => {
+        if (!mediaRecorderTraining || mediaRecorderTraining.state !== 'recording') {
+            return;
+        }
+        
+        waveformAnimationIdTraining = requestAnimationFrame(draw);
+        
+        analyserTraining.getByteFrequencyData(dataArray);
+        
+        ctx.fillStyle = '#333333';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let barHeight;
+        let x = 0;
+        
+        for (let i = 0; i < bufferLength; i++) {
+            barHeight = (dataArray[i] / 255) * canvas.height * 0.8;
+            
+            const r = barHeight + 25 * (i / bufferLength);
+            const g = 250 * (i / bufferLength);
+            const b = 50;
+            
+            ctx.fillStyle = `rgb(${r},${g},${b})`;
+            ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+            
+            x += barWidth + 1;
+        }
+    };
+    
+    draw();
+}
+
+async function transcribeAudioTraining(audioBlob) {
+    try {
+        console.log('[Voice-Training] Starting transcription...');
+        
+        // Get API key from AIcalls.js
+        const { initializeAPIKeys } = await import('./AIcalls.js');
+        const apiKeys = await initializeAPIKeys();
+        const apiKey = apiKeys.OPENAI_API_KEY;
+        
+        if (!apiKey) {
+            throw new Error('No API key available for transcription');
+        }
+        
+        // Create form data
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'recording.webm');
+        formData.append('model', 'whisper-1');
+        
+        // Make API request
+        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: formData
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Transcription failed: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log('[Voice-Training] Transcription result:', result);
+        
+        if (result.text) {
+            // Insert transcribed text into the appropriate textarea
+            insertTranscribedTextTraining(result.text);
+        }
+        
+    } catch (error) {
+        console.error('[Voice-Training] Transcription error:', error);
+        showError('Failed to transcribe audio. Please try again.');
+    } finally {
+        switchToNormalModeTraining();
+    }
+}
+
+function insertTranscribedTextTraining(text) {
+    const targetTextarea = document.getElementById(`training-${currentTrainingTarget === 'user' ? 'user-input' : 'ai-response'}`);
+    if (targetTextarea) {
+        const currentValue = targetTextarea.value;
+        const cursorPosition = targetTextarea.selectionStart;
+        
+        // Insert text at cursor position
+        const newValue = currentValue.slice(0, cursorPosition) + text + currentValue.slice(cursorPosition);
+        targetTextarea.value = newValue;
+        
+        // Move cursor to end of inserted text
+        const newCursorPosition = cursorPosition + text.length;
+        targetTextarea.setSelectionRange(newCursorPosition, newCursorPosition);
+        targetTextarea.focus();
+        
+        console.log('[Voice-Training] Transcribed text inserted into textarea');
+    }
+}
+
+// >>> ADDED: AI Editor Voice Recording functionality
+let mediaRecorderAIEditor = null;
+let audioChunksAIEditor = [];
+let audioContextAIEditor = null;
+let analyserAIEditor = null;
+let waveformAnimationIdAIEditor = null;
+let recordingStartTimeAIEditor = null;
+let recordingTimerIntervalAIEditor = null;
+
+// Initialize AI Editor voice recording event handlers
+function initializeAIEditorVoiceRecording() {
+    // Voice button
+    const voiceInputAIEditor = document.getElementById('voice-input-ai-editor');
+    
+    // Cancel and accept buttons
+    const cancelVoiceRecordingAIEditor = document.getElementById('cancel-voice-recording-ai-editor');
+    const acceptVoiceRecordingAIEditor = document.getElementById('accept-voice-recording-ai-editor');
+    
+    if (voiceInputAIEditor) {
+        voiceInputAIEditor.onclick = () => {
+            startVoiceRecordingAIEditor();
+        };
+    }
+    
+    if (cancelVoiceRecordingAIEditor) {
+        cancelVoiceRecordingAIEditor.onclick = () => {
+            stopVoiceRecordingAIEditor();
+        };
+    }
+    
+    if (acceptVoiceRecordingAIEditor) {
+        acceptVoiceRecordingAIEditor.onclick = () => {
+            if (mediaRecorderAIEditor && mediaRecorderAIEditor.state === 'recording') {
+                mediaRecorderAIEditor.stop();
+            }
+        };
+    }
+}
+
+async function startVoiceRecordingAIEditor() {
+    try {
+        console.log('[Voice-AIEditor] Requesting microphone access...');
+        
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 44100
+            } 
+        });
+        
+        console.log('[Voice-AIEditor] Microphone access granted');
+        
+        // Switch to recording mode
+        switchToRecordingModeAIEditor();
+        
+        // Setup audio context for waveform visualization
+        audioContextAIEditor = new (window.AudioContext || window.webkitAudioContext)();
+        analyserAIEditor = audioContextAIEditor.createAnalyser();
+        const source = audioContextAIEditor.createMediaStreamSource(stream);
+        source.connect(analyserAIEditor);
+        
+        // Configure analyser
+        analyserAIEditor.fftSize = 1024;
+        analyserAIEditor.smoothingTimeConstant = 0.3;
+        analyserAIEditor.minDecibels = -90;
+        analyserAIEditor.maxDecibels = -10;
+        
+        // Start waveform animation
+        drawWaveformAIEditor();
+        
+        // Create MediaRecorder
+        const options = { mimeType: 'audio/webm;codecs=opus' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'audio/webm';
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options.mimeType = 'audio/mp4';
+            }
+        }
+        
+        mediaRecorderAIEditor = new MediaRecorder(stream, options);
+        audioChunksAIEditor = [];
+        
+        mediaRecorderAIEditor.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunksAIEditor.push(event.data);
+            }
+        };
+        
+        mediaRecorderAIEditor.onstop = async () => {
+            console.log('[Voice-AIEditor] Recording stopped');
+            
+            // Stop all tracks
+            stream.getTracks().forEach(track => track.stop());
+            
+            // Create audio blob
+            const audioBlob = new Blob(audioChunksAIEditor, { type: 'audio/webm' });
+            console.log('[Voice-AIEditor] Audio blob created, size:', audioBlob.size);
+            
+            // Show loading state
+            switchToLoadingModeAIEditor();
+            
+            // Transcribe audio
+            await transcribeAudioAIEditor(audioBlob);
+        };
+        
+        // Start recording
+        mediaRecorderAIEditor.start();
+        recordingStartTimeAIEditor = Date.now();
+        
+        // Start timer
+        updateRecordingTimerAIEditor();
+        recordingTimerIntervalAIEditor = setInterval(updateRecordingTimerAIEditor, 100);
+        
+        console.log('[Voice-AIEditor] Recording started');
+        
+    } catch (error) {
+        console.error('[Voice-AIEditor] Error starting recording:', error);
+        showError('Failed to access microphone. Please check your permissions.');
+        switchToNormalModeAIEditor();
+    }
+}
+
+function stopVoiceRecordingAIEditor() {
+    console.log('[Voice-AIEditor] Stopping recording...');
+    
+    // Stop waveform animation
+    if (waveformAnimationIdAIEditor) {
+        cancelAnimationFrame(waveformAnimationIdAIEditor);
+        waveformAnimationIdAIEditor = null;
+    }
+    
+    // Stop timer
+    if (recordingTimerIntervalAIEditor) {
+        clearInterval(recordingTimerIntervalAIEditor);
+        recordingTimerIntervalAIEditor = null;
+    }
+    
+    // Stop recording
+    if (mediaRecorderAIEditor && mediaRecorderAIEditor.state === 'recording') {
+        mediaRecorderAIEditor.stop();
+    }
+    
+    // Close audio context
+    if (audioContextAIEditor) {
+        audioContextAIEditor.close();
+        audioContextAIEditor = null;
+    }
+    
+    // Switch back to normal mode
+    switchToNormalModeAIEditor();
+    
+    // Reset variables
+    recordingStartTimeAIEditor = null;
+}
+
+function switchToRecordingModeAIEditor() {
+    const voiceRecordingMode = document.getElementById('voice-recording-mode-ai-editor');
+    if (voiceRecordingMode) {
+        voiceRecordingMode.style.display = 'block';
+    }
+}
+
+function switchToLoadingModeAIEditor() {
+    // Hide recording mode
+    const voiceRecordingMode = document.getElementById('voice-recording-mode-ai-editor');
+    if (voiceRecordingMode) {
+        voiceRecordingMode.style.display = 'none';
+    }
+    
+    // Show loading mode
+    const transcriptionLoadingMode = document.getElementById('transcription-loading-mode-ai-editor');
+    if (transcriptionLoadingMode) {
+        transcriptionLoadingMode.style.display = 'block';
+    }
+}
+
+function switchToNormalModeAIEditor() {
+    // Hide all modes
+    const voiceRecordingMode = document.getElementById('voice-recording-mode-ai-editor');
+    const transcriptionLoadingMode = document.getElementById('transcription-loading-mode-ai-editor');
+    
+    if (voiceRecordingMode) {
+        voiceRecordingMode.style.display = 'none';
+    }
+    if (transcriptionLoadingMode) {
+        transcriptionLoadingMode.style.display = 'none';
+    }
+}
+
+function updateRecordingTimerAIEditor() {
+    if (!recordingStartTimeAIEditor) return;
+    
+    const elapsed = Math.floor((Date.now() - recordingStartTimeAIEditor) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    const timeString = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    
+    const timer = document.getElementById('voice-recording-timer-ai-editor');
+    if (timer) {
+        timer.textContent = timeString;
+    }
+}
+
+function drawWaveformAIEditor() {
+    if (!analyserAIEditor) return;
+    
+    const canvas = document.getElementById('voice-waveform-ai-editor');
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    const bufferLength = analyserAIEditor.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+    
+    const draw = () => {
+        if (!mediaRecorderAIEditor || mediaRecorderAIEditor.state !== 'recording') {
+            return;
+        }
+        
+        waveformAnimationIdAIEditor = requestAnimationFrame(draw);
+        
+        analyserAIEditor.getByteFrequencyData(dataArray);
+        
+        ctx.fillStyle = '#333333';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        const barWidth = (canvas.width / bufferLength) * 2.5;
+        let barHeight;
+        let x = 0;
+        
+        for (let i = 0; i < bufferLength; i++) {
+            barHeight = (dataArray[i] / 255) * canvas.height * 0.8;
+            
+            const r = barHeight + 25 * (i / bufferLength);
+            const g = 250 * (i / bufferLength);
+            const b = 50;
+            
+            ctx.fillStyle = `rgb(${r},${g},${b})`;
+            ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+            
+            x += barWidth + 1;
+        }
+    };
+    
+    draw();
+}
+
+async function transcribeAudioAIEditor(audioBlob) {
+    try {
+        console.log('[Voice-AIEditor] Starting transcription...');
+        
+        // Get API key from AIcalls.js
+        const { initializeAPIKeys } = await import('./AIcalls.js');
+        const apiKeys = await initializeAPIKeys();
+        const apiKey = apiKeys.OPENAI_API_KEY;
+        
+        if (!apiKey) {
+            throw new Error('No API key available for transcription');
+        }
+        
+        // Create form data
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'recording.webm');
+        formData.append('model', 'whisper-1');
+        
+        // Make API request
+        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: formData
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Transcription failed: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log('[Voice-AIEditor] Transcription result:', result);
+        
+        if (result.text) {
+            // Insert transcribed text into the AI Editor instructions textarea
+            insertTranscribedTextAIEditor(result.text);
+        }
+        
+    } catch (error) {
+        console.error('[Voice-AIEditor] Transcription error:', error);
+        showError('Failed to transcribe audio. Please try again.');
+    } finally {
+        switchToNormalModeAIEditor();
+    }
+}
+
+function insertTranscribedTextAIEditor(text) {
+    const targetTextarea = document.getElementById('ai-editor-instructions');
+    if (targetTextarea) {
+        const currentValue = targetTextarea.value;
+        const cursorPosition = targetTextarea.selectionStart;
+        
+        // Insert text at cursor position
+        const newValue = currentValue.slice(0, cursorPosition) + text + currentValue.slice(cursorPosition);
+        targetTextarea.value = newValue;
+        
+        // Move cursor to end of inserted text
+        const newCursorPosition = cursorPosition + text.length;
+        targetTextarea.setSelectionRange(newCursorPosition, newCursorPosition);
+        targetTextarea.focus();
+        
+        console.log('[Voice-AIEditor] Transcribed text inserted into instructions textarea');
+    }
+}
+// <<< END ADDED
+
+// NEW FUNCTION SPECIFICALLY FOR AI MODEL PLANNER OUTPUT (ALWAYS FIRST PASS)
+export async function processModelCodesForPlanner(modelCodesString) {
+    console.log(`[processModelCodesForPlanner] Called with ModelCodes.`);
+    if (DEBUG) console.log("[processModelCodesForPlanner] Input (first 500 chars):", modelCodesString.substring(0,500));
+
+    // Substitute <BR> with <BR; labelRow=""; row1 = "||||||||||||";>
+    if (modelCodesString && typeof modelCodesString === 'string') {
+        modelCodesString = modelCodesString.replace(/<BR>/g, '<BR; labelRow=""; row1 = "||||||||||||";>');
+    }
+
+    let runResult = null;
+
+    try {
+        // 0. Set calculation mode to manual
+        await Excel.run(async (context) => {
+            context.application.calculationMode = Excel.CalculationMode.manual;
+            await context.sync();
+            console.log("[processModelCodesForPlanner] Calculation mode set to manual.");
+        });
+
+        // 1. Validate all incoming codes
+        if (modelCodesString.trim().length > 0) {
+            console.log("[processModelCodesForPlanner] Validating ALL codes...");
+            const validationErrors = await validateCodeStringsForRun(modelCodesString);
+            if (validationErrors && validationErrors.length > 0) {
+                const errorMsg = "Code validation failed for planner-generated codes:\n" + validationErrors.join("\n");
+                console.error("[processModelCodesForPlanner] Code validation failed:", validationErrors);
+                throw new Error(errorMsg);
+            }
+            console.log("[processModelCodesForPlanner] Code validation successful.");
+        } else {
+            console.log("[processModelCodesForPlanner] No codes provided by planner to validate or process. Exiting.");
+            return; 
+        }
+
+                    // 2. Insert base sheets from Worksheets_4.3.25 v1.xlsx
+        console.log("[processModelCodesForPlanner] Inserting base sheets from Worksheets_4.3.25 v1.xlsx...");
+        // First, test if basic assets are accessible
+        console.log(`[processModelCodesForPlanner] Testing basic asset accessibility...`);
+        try {
+            const testUrls = CONFIG.getAssetUrlsWithFallback('assets/codestringDB.txt');
+            for (const testUrl of testUrls) {
+                try {
+                    const testResponse = await fetch(testUrl, { method: 'HEAD' });
+                    console.log(`[processModelCodesForPlanner] Asset test - ${testUrl}: ${testResponse.status}`);
+                    if (testResponse.ok) {
+                        console.log(`[processModelCodesForPlanner] ✅ Basic assets are accessible via: ${testUrl}`);
+                        break;
+                    }
+                } catch (e) {
+                    console.log(`[processModelCodesForPlanner] Asset test failed for ${testUrl}: ${e.message}`);
+                }
+            }
+        } catch (testError) {
+            console.warn(`[processModelCodesForPlanner] Asset accessibility test failed:`, testError);
+        }
+
+        // Try multiple URLs with fallback in production
+        const worksheetUrls = CONFIG.getAssetUrlsWithFallback('assets/Worksheets_4.3.25 v1.xlsx');
+        console.log(`[processModelCodesForPlanner] Trying ${worksheetUrls.length} possible URLs:`, worksheetUrls);
+        
+        let worksheetsResponse = null;
+        let lastError = null;
+        
+        // Enhanced fetch with proper binary handling and fallback
+        for (let i = 0; i < worksheetUrls.length; i++) {
+            const url = worksheetUrls[i];
+            console.log(`[processModelCodesForPlanner] Attempt ${i + 1}/${worksheetUrls.length}: ${url}`);
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/octet-stream,*/*'
+                    },
+                    cache: 'no-cache'
+                });
+                
+                console.log(`[processModelCodesForPlanner] Response ${i + 1}: ${response.status} ${response.statusText}`);
+                console.log(`[processModelCodesForPlanner] Content-Type: ${response.headers.get('content-type')}`);
+                
+                if (response.ok) {
+                    // Quick check if this looks like binary data
+                    const contentType = response.headers.get('content-type');
+                    if (contentType && (contentType.includes('application/') || contentType.includes('octet-stream'))) {
+                        console.log(`[processModelCodesForPlanner] ✅ Found valid binary response at URL ${i + 1}`);
+                        worksheetsResponse = response;
+                        break;
+                    } else {
+                        console.warn(`[processModelCodesForPlanner] ⚠️ URL ${i + 1} returned wrong content-type: ${contentType}`);
+                        lastError = new Error(`Wrong content-type: ${contentType}`);
+                    }
+                } else {
+                    console.warn(`[processModelCodesForPlanner] ⚠️ URL ${i + 1} returned ${response.status}`);
+                    lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+            } catch (fetchError) {
+                console.warn(`[processModelCodesForPlanner] ⚠️ URL ${i + 1} failed:`, fetchError.message);
+                lastError = fetchError;
+            }
+        }
+        
+        if (!worksheetsResponse) {
+            console.warn(`[processModelCodesForPlanner] All URLs failed, attempting test with minimal Excel file...`);
+            try {
+                // Import is already done at top of file, just need to import the specific function
+                const CodeCollectionModule = await import('./CodeCollection.js');
+                const minimalBase64 = CodeCollectionModule.createMinimalExcelBase64();
+                console.log(`[processModelCodesForPlanner] Testing with minimal Excel file (${minimalBase64.length} chars)...`);
+                await handleInsertWorksheetsFromBase64(minimalBase64, ['TestSheet']);
+                console.log(`[processModelCodesForPlanner] ✅ Minimal Excel test succeeded! The Excel API works.`);
+                console.log(`[processModelCodesForPlanner] Issue is definitely with asset loading/corruption, not Excel API.`);
+            } catch (testError) {
+                console.error(`[processModelCodesForPlanner] ❌ Even minimal Excel test failed:`, testError);
+                console.error(`[processModelCodesForPlanner] This suggests Excel API issue, not just asset loading issue.`);
+            }
+            //dfdf
+            throw new Error(`All worksheet URLs failed. Last error: ${lastError?.message || 'Unknown error'}`);
+        }
+        
+        console.log(`[processModelCodesForPlanner] Worksheets response status: ${worksheetsResponse.status} ${worksheetsResponse.statusText}`);
+        console.log(`[processModelCodesForPlanner] Worksheets response headers:`, Object.fromEntries(worksheetsResponse.headers.entries()));
+        console.log(`[processModelCodesForPlanner] Content-Type: ${worksheetsResponse.headers.get('content-type')}`);
+        console.log(`[processModelCodesForPlanner] Content-Length: ${worksheetsResponse.headers.get('content-length')}`);
+        
+        if (!worksheetsResponse.ok) {
+            console.error(`[processModelCodesForPlanner] Response not OK. Status: ${worksheetsResponse.status}`);
+            console.error(`[processModelCodesForPlanner] Response text (first 200 chars):`, await worksheetsResponse.clone().text().then(t => t.substring(0, 200)));
+            throw new Error(`[processModelCodesForPlanner] Worksheets_4.3.25 v1.xlsx load failed: ${worksheetsResponse.status} ${worksheetsResponse.statusText}`);
+        }
+        
+        // Check if we're actually getting binary data
+        const contentType = worksheetsResponse.headers.get('content-type');
+        if (contentType && !contentType.includes('application/') && !contentType.includes('octet-stream')) {
+            console.warn(`[processModelCodesForPlanner] ⚠️ Unexpected content-type: ${contentType}`);
+            console.warn(`[processModelCodesForPlanner] This suggests we're not getting a binary file`);
+            
+            // Get the actual response as text to see what we're receiving
+            const responseText = await worksheetsResponse.clone().text();
+            console.error(`[processModelCodesForPlanner] Response content (first 500 chars): "${responseText.substring(0, 500)}"`);
+            throw new Error(`Expected binary Excel file but got content-type: ${contentType}`);
+        }
+        
+        const wsArrayBuffer = await worksheetsResponse.arrayBuffer();
+        console.log(`[processModelCodesForPlanner] Worksheets ArrayBuffer size: ${wsArrayBuffer.byteLength} bytes`);
+        
+        // Verify the ArrayBuffer contains valid Excel data
+        const uint8View = new Uint8Array(wsArrayBuffer);
+        const firstFourBytes = Array.from(uint8View.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+        console.log(`[processModelCodesForPlanner] First 4 bytes of ArrayBuffer: ${firstFourBytes}`);
+        
+        // Check for Excel signature (PK = 50 4B in hex)
+        if (uint8View[0] === 0x50 && uint8View[1] === 0x4B) {
+            console.log(`[processModelCodesForPlanner] ✅ Valid Excel file signature in ArrayBuffer`);
+        } else {
+            console.error(`[processModelCodesForPlanner] ❌ Invalid Excel file signature in ArrayBuffer!`);
+            console.error(`[processModelCodesForPlanner] Expected: 50 4B (PK), Got: ${uint8View[0].toString(16)} ${uint8View[1].toString(16)}`);
+            throw new Error(`Excel file is corrupted - invalid file signature in source ArrayBuffer`);
+        }
+        
+        // Robust base64 conversion using proven method
+        console.log(`[processModelCodesForPlanner] Converting ArrayBuffer to base64...`);
+        let wsBase64String;
+        
+        try {
+            // Use the most reliable method: Uint8Array -> btoa
+            const uint8Array = new Uint8Array(wsArrayBuffer);
+            
+            // Convert to binary string using reliable chunk processing
+            let binaryString = '';
+            const chunkSize = 8192; // Process in chunks to avoid call stack limits
+            
+            for (let i = 0; i < uint8Array.length; i += chunkSize) {
+                const chunk = uint8Array.subarray(i, Math.min(i + chunkSize, uint8Array.length));
+                // Use spread operator for better compatibility
+                binaryString += String.fromCharCode(...chunk);
+            }
+            
+            // Convert to base64
+            wsBase64String = btoa(binaryString);
+            
+            console.log(`[processModelCodesForPlanner] ✅ Base64 conversion successful`);
+            console.log(`[processModelCodesForPlanner] Worksheets base64 length: ${wsBase64String.length} characters`);
+            
+            // Verify the base64 is valid by testing decode
+            const testDecode = atob(wsBase64String.substring(0, 100));
+            console.log(`[processModelCodesForPlanner] ✅ Base64 decode test successful`);
+            
+        } catch (conversionError) {
+            console.error(`[processModelCodesForPlanner] ❌ Base64 conversion failed:`, conversionError);
+            throw new Error(`Failed to convert worksheets to base64: ${conversionError.message}`);
+        }
+        
+        await handleInsertWorksheetsFromBase64(wsBase64String);
+        console.log("[processModelCodesForPlanner] Base sheets (Worksheets_4.3.25 v1.xlsx) inserted.");
+
+        // 3. Insert codes.xlsx (as runCodes depends on it)
+        console.log("[processModelCodesForPlanner] Inserting Codes.xlsx...");
+        const codesUrl = CONFIG.getAssetUrl('assets/Codes.xlsx');
+        console.log(`[processModelCodesForPlanner] Loading codes from: ${codesUrl}`);
+        const codesResponse = await fetch(codesUrl);
+        console.log(`[processModelCodesForPlanner] Codes response status: ${codesResponse.status} ${codesResponse.statusText}`);
+        if (!codesResponse.ok) throw new Error(`[processModelCodesForPlanner] Codes.xlsx load failed: ${codesResponse.status} ${codesResponse.statusText}`);
+        
+        const codesArrayBuffer = await codesResponse.arrayBuffer();
+        console.log(`[processModelCodesForPlanner] Codes ArrayBuffer size: ${codesArrayBuffer.byteLength} bytes`);
+        
+        // Improved base64 conversion using modern method
+        let codesBase64String;
+        try {
+            // Use FileReader for better binary handling
+            const blob = new Blob([codesArrayBuffer]);
+            codesBase64String = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const dataUrl = reader.result;
+                    const base64 = dataUrl.split(',')[1]; // Remove data:application/octet-stream;base64, prefix
+                    resolve(base64);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+            console.log(`[processModelCodesForPlanner] Codes base64 length: ${codesBase64String.length} characters`);
+            console.log(`[processModelCodesForPlanner] Codes base64 prefix: ${codesBase64String.substring(0, 50)}...`);
+        } catch (conversionError) {
+            console.error(`[processModelCodesForPlanner] Codes base64 conversion failed:`, conversionError);
+            throw new Error(`Failed to convert codes to base64: ${conversionError.message}`);
+        }
+        
+        await handleInsertWorksheetsFromBase64(codesBase64String, ["Codes"]); 
+        console.log("[processModelCodesForPlanner] Codes.xlsx sheets inserted/updated.");
+    
+        // 4. Execute runCodes
+        console.log("[processModelCodesForPlanner] Populating collection...");
+        const collection = populateCodeCollection(modelCodesString);
+        console.log(`[processModelCodesForPlanner] Collection populated with ${collection.length} code(s)`);
+
+        if (collection.length > 0) {
+            console.log("[processModelCodesForPlanner] Running codes...");
+            runResult = await runCodes(collection);
+            console.log("[processModelCodesForPlanner] runCodes executed. Result:", runResult);
+        } else {
+            console.log("[processModelCodesForPlanner] Collection is empty after population, skipping runCodes execution.");
+            runResult = { assumptionTabs: [] };
+        }
+
+        // 5. Post-processing
+        console.log("[processModelCodesForPlanner] Starting post-processing steps...");
+        if (runResult && runResult.assumptionTabs && runResult.assumptionTabs.length > 0) {
+            console.log("[processModelCodesForPlanner] Processing assumption tabs...");
+            await processAssumptionTabs(runResult.assumptionTabs);
+        } else {
+            console.log("[processModelCodesForPlanner] No assumption tabs to process from runResult.");
+        }
+
+        console.log("[processModelCodesForPlanner] Hiding specific columns and navigating...");
+        await hideColumnsAndNavigate(runResult?.assumptionTabs || []);
+
+        // 6. Cleanup Codes sheet
+        console.log("[processModelCodesForPlanner] Deleting Codes sheet...");
+        await Excel.run(async (context) => {
+            try {
+                context.workbook.worksheets.getItem("Codes").delete();
+                console.log("[processModelCodesForPlanner] Codes sheet deleted.");
+            } catch (e) {
+                if (e instanceof OfficeExtension.Error && e.code === Excel.ErrorCodes.itemNotFound) {
+                    console.warn("[processModelCodesForPlanner] Codes sheet not found during cleanup, skipping deletion.");
+                } else { 
+                    console.error("[processModelCodesForPlanner] Error deleting Codes sheet during cleanup:", e);
+                }
+            }
+            await context.sync();
+        }).catch(error => { 
+            console.error("[processModelCodesForPlanner] Error during Codes sheet cleanup sync:", error);
+        });
+
+        console.log("[processModelCodesForPlanner] Successfully completed.");
+
+    } catch (error) {
+        console.error("[processModelCodesForPlanner] Error during processing:", error);
+        throw error; 
+    } finally {
+        try {
+            await Excel.run(async (context) => {
+                context.application.calculationMode = Excel.CalculationMode.automatic;
+                await context.sync();
+                console.log("[processModelCodesForPlanner] Calculation mode set to automatic.");
+            });
+        } catch (finalError) {
+            console.error("[processModelCodesForPlanner] Error setting calculation mode to automatic:", finalError);
+        }
+    }
+}
+
+// Original insertSheetsAndRunCodes function should be here, UNCHANGED.
+// Ensure it's not accidentally deleted or modified by the `// ... existing code ...` placeholder.
+async function insertSheetsAndRunCodes() {
+    const codesTextarea = document.getElementById('codes-textarea');
+    if (!codesTextarea) {
+        showError("Could not find the code input area. Cannot run codes.");
+        return;
+    }
+    loadedCodeStrings = codesTextarea.value; // Update global variable
+
+    // Substitute <BR> with <BR; labelRow=""; row1 = "||||||||||||";>
+    if (loadedCodeStrings && typeof loadedCodeStrings === 'string') {
+        loadedCodeStrings = loadedCodeStrings.replace(/<BR>/g, '<BR; labelRow=""; row1 = "||||||||||||";>');
+    }
+
+    try {
+        localStorage.setItem('userCodeStrings', loadedCodeStrings);
+        console.log("[Run Codes] Automatically saved codes from textarea to localStorage.");
+    } catch (error) {
+        console.error("[Run Codes] Error auto-saving codes to localStorage:", error);
+        showError(`Error automatically saving codes: ${error.message}. Run may not reflect latest changes.`);
+    }
+
+    let codesToRun = loadedCodeStrings;
+    let allCodeContentToProcess = ""; 
+    let runResult = null; 
+
+    // Substitute <BR> with <BR; labelRow=""; row1 = "||||||||||||";> in codesToRun as well, as it's derived from loadedCodeStrings after potential modification
+    if (codesToRun && typeof codesToRun === 'string') {
+        codesToRun = codesToRun.replace(/<BR>/g, '<BR; labelRow=""; row1 = "||||||||||||";>');
+    }
+
+    try {
+        let financialsSheetExists = false;
+        await Excel.run(async (context) => {
+            try {
+                const financialsSheet = context.workbook.worksheets.getItem("Financials");
+                financialsSheet.load("name");
+                await context.sync();
+                financialsSheetExists = true;
+            } catch (error) {
+                if (error instanceof OfficeExtension.Error && error.code === Excel.ErrorCodes.itemNotFound) {
+                    financialsSheetExists = false;
+                } else { throw error; } 
+            }
+        });
+
+        await Excel.run(async (context) => {
+            context.application.calculationMode = Excel.CalculationMode.manual;
+            await context.sync();
+        });
+
+        setButtonLoading(true);
+        console.log("Starting code processing...");
+
+        if (!financialsSheetExists) {
+            console.log("[Run Codes] FIRST PASS: Financials sheet not found.");
+            allCodeContentToProcess = codesToRun;
+            if (allCodeContentToProcess.trim().length > 0) {
+                const validationErrors = await validateCodeStringsForRun(allCodeContentToProcess);
+                if (validationErrors && validationErrors.length > 0) {
+                    // Separate logic errors (LERR) from format errors (FERR)
+                    const logicErrors = validationErrors.filter(err => err.includes('[LERR'));
+                    const formatErrors = validationErrors.filter(err => err.includes('[FERR'));
+                    
+                    if (logicErrors.length > 0) {
+                        // Logic errors are critical - stop the process
+                        const errorMsg = "Logic validation failed. Please fix these errors before running:\n" + logicErrors.join("\n");
+                        console.error("Logic validation failed:", logicErrors);
+                        showError("Logic validation failed. See chat for details.");
+                        appendMessage(errorMsg);
+                        setButtonLoading(false);
+                        return;
+                    }
+                    
+                    if (formatErrors.length > 0) {
+                        // Format errors are warnings - show them but continue
+                        const warningMsg = "Format validation warnings:\n" + formatErrors.join("\n");
+                        console.warn("Format validation warnings:", formatErrors);
+                        showMessage("Format validation warnings detected. See chat for details.");
+                        appendMessage(warningMsg);
+                    }
+                }
+                console.log("Initial code validation completed.");
+            } else {
+                console.log("[Run Codes] No codes to validate on first pass.");
+            }
+            const worksheetsResponse = await fetch(CONFIG.getAssetUrl('assets/Worksheets_4.3.25 v1.xlsx'));
+            if (!worksheetsResponse.ok) throw new Error(`Worksheets load failed: ${worksheetsResponse.statusText}`);
+            const worksheetsArrayBuffer = await worksheetsResponse.arrayBuffer();
+            console.log(`[insertSheetsAndRunCodes] Worksheets ArrayBuffer size: ${worksheetsArrayBuffer.byteLength} bytes`);
+            
+            // Improved base64 conversion using modern method
+            let worksheetsBase64String;
+            try {
+                const blob = new Blob([worksheetsArrayBuffer]);
+                worksheetsBase64String = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const dataUrl = reader.result;
+                        const base64 = dataUrl.split(',')[1]; // Remove data:application/octet-stream;base64, prefix
+                        resolve(base64);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+                console.log(`[insertSheetsAndRunCodes] Worksheets base64 length: ${worksheetsBase64String.length} characters`);
+            } catch (conversionError) {
+                console.error(`[insertSheetsAndRunCodes] Worksheets base64 conversion failed:`, conversionError);
+                throw new Error(`Failed to convert worksheets to base64: ${conversionError.message}`);
+            }
+            
+            await handleInsertWorksheetsFromBase64(worksheetsBase64String);
+            console.log("Base sheets inserted.");
+        } else {
+            console.log("[Run Codes] SUBSEQUENT PASS: Financials sheet found.");
+            
+            // Process ALL codes (no change detection)
+            allCodeContentToProcess = codesToRun;
+            
+            if (allCodeContentToProcess.trim().length > 0) {
+                const validationErrors = await validateCodeStringsForRun(allCodeContentToProcess);
+                if (validationErrors && validationErrors.length > 0) {
+                    // Separate logic errors (LERR) from format errors (FERR)
+                    const logicErrors = validationErrors.filter(err => err.includes('[LERR'));
+                    const formatErrors = validationErrors.filter(err => err.includes('[FERR'));
+                    
+                    if (logicErrors.length > 0) {
+                        // Logic errors are critical - stop the process
+                        const errorMsg = "Logic validation failed. Please fix these errors before running:\n" + logicErrors.join("\n");
+                        console.error("Logic validation failed:", logicErrors);
+                        showError("Logic validation failed. See chat for details.");
+                        appendMessage(errorMsg);
+                        setButtonLoading(false);
+                        return;
+                    }
+                    
+                    if (formatErrors.length > 0) {
+                        // Format errors are warnings - show them but continue
+                        const warningMsg = "Format validation warnings:\n" + formatErrors.join("\n");
+                        console.warn("Format validation warnings:", formatErrors);
+                        showMessage("Format validation warnings detected. See chat for details.");
+                        appendMessage(warningMsg);
+                    }
+                }
+                console.log("Code validation completed.");
+                
+                try {
+                    const codesResponse = await fetch(CONFIG.getAssetUrl('assets/Codes.xlsx'));
+                    if (!codesResponse.ok) throw new Error(`Codes.xlsx load failed: ${codesResponse.statusText}`);
+                    const codesArrayBuffer = await codesResponse.arrayBuffer();
+                    console.log(`[insertSheetsAndRunCodes] Codes ArrayBuffer size: ${codesArrayBuffer.byteLength} bytes`);
+                    
+                    // Improved base64 conversion using modern method
+                    let codesBase64String;
+                    try {
+                        const blob = new Blob([codesArrayBuffer]);
+                        codesBase64String = await new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                const dataUrl = reader.result;
+                                const base64 = dataUrl.split(',')[1]; // Remove data:application/octet-stream;base64, prefix
+                                resolve(base64);
+                            };
+                            reader.onerror = reject;
+                            reader.readAsDataURL(blob);
+                        });
+                        console.log(`[insertSheetsAndRunCodes] Codes base64 length: ${codesBase64String.length} characters`);
+                    } catch (conversionError) {
+                        console.error(`[insertSheetsAndRunCodes] Codes base64 conversion failed:`, conversionError);
+                        throw new Error(`Failed to convert codes to base64: ${conversionError.message}`);
+                    }
+                    
+                    await handleInsertWorksheetsFromBase64(codesBase64String, ["Codes"]);
+                    console.log("Codes.xlsx sheets inserted.");
+                } catch (e) {
+                    console.error("Failed to insert sheets from Codes.xlsx:", e);
+                    showError("Failed to insert necessary sheets from Codes.xlsx. Aborting.");
+                    setButtonLoading(false);
+                    return;
+                }
+            }
+        }
+
+        if (allCodeContentToProcess.trim().length > 0) {
+            const collection = populateCodeCollection(allCodeContentToProcess);
+            if (collection.length > 0) {
+                runResult = await runCodes(collection);
+                console.log("Codes executed:", runResult);
+            } else {
+                 if (!runResult) runResult = { assumptionTabs: [] };
+            }
+        } else {
+             if (!runResult) runResult = { assumptionTabs: [] };
+        }
+        if (runResult && runResult.assumptionTabs && runResult.assumptionTabs.length > 0) {
+            await processAssumptionTabs(runResult.assumptionTabs);
+        } else {
+             console.log("No assumption tabs to process.");
+        }
+        await hideColumnsAndNavigate(runResult?.assumptionTabs || []);
+        await Excel.run(async (context) => {
+            try {
+                context.workbook.worksheets.getItem("Codes").delete();
+            } catch (e) {
+                if (e instanceof OfficeExtension.Error && e.code === Excel.ErrorCodes.itemNotFound) {
+                     console.warn("Codes sheet not found, skipping deletion.");
+                } else { console.error("Error deleting Codes sheet:", e); }
+            }
+            await context.sync();
+        }).catch(error => { console.error("Error during sheet cleanup:", error); });
+
+        showMessage("Code processing finished successfully!");
+    } catch (error) {
+        console.error("An error occurred during the build process:", error);
+        showError(`Operation failed: ${error.message || error.toString()}`);
+    } finally {
+        try {
+            await Excel.run(async (context) => {
+                context.application.calculationMode = Excel.CalculationMode.automatic;
+                await context.sync();
+            });
+        } catch (finalError) {
+            console.error("Error setting calculation mode to automatic:", finalError);
+        }
+        setButtonLoading(false);
+    }
+}
+
+Office.onReady(async (info) => {
+  productionLog('Office.onReady started');
+  
+  // Set up authentication expired event listener
+  window.addEventListener('auth-expired', (event) => {
+    console.log('⚠️ Authentication expired event received:', event.detail.message);
+    
+    // Show authentication view
+    const authView = document.getElementById('authentication-view');
+    const appBody = document.getElementById('app-body');
+    const clientModeView = document.getElementById('client-mode-view');
+    
+    if (authView) authView.style.display = 'flex';
+    if (appBody) appBody.style.display = 'none';
+    if (clientModeView) clientModeView.style.display = 'none';
+    
+    // Show error message
+    if (typeof showError === 'function') {
+      showError(event.detail.message || 'Session expired. Please sign in again.');
+    }
+  });
+  
+  // Initialize backend integration
+  try {
+    console.log("🚀 Initializing backend integration...");
+    console.log('🔗 ========================================');
+    console.log(`🔗 USING BACKEND: ${CONFIG.backend.baseUrl}`);
+    console.log('🔗 ========================================');
+    
+    // Check backend health
+    // Backend health check removed - standalone mode
+  } catch (error) {
+    console.warn("Backend initialization error:", error);
+  }
+  
+  // Try to set optimal task pane width for our sidebar layout
+  try {
+    // Method 1: Set preferred width via CSS (affects internal layout)
+    document.documentElement.style.setProperty('--preferred-width', '500px');
+    
+    // Method 2: Request wider initial size if possible
+    if (Office.context && Office.context.requirements && Office.context.requirements.isSetSupported('AddinCommands', '1.1')) {
+      // Remove explicit width constraints to allow full task pane width usage
+      document.body.style.minWidth = '';
+      document.body.style.width = '';
+      
+      // Set a meta tag to suggest preferred width (but don't force it)
+      const viewportMeta = document.createElement('meta');
+      viewportMeta.name = 'viewport';
+      viewportMeta.content = 'width=device-width, initial-scale=1.0';
+      document.head.appendChild(viewportMeta);
+    }
+    
+    // Method 3: Store user's preferred width in localStorage for consistency
+    const preferredWidth = localStorage.getItem('taskpane-preferred-width') || '500';
+    console.log(`Preferred width from storage: ${preferredWidth}px`);
+    
+  } catch (error) {
+    console.log('Width control not available:', error);
+  }
+  
+  if (info.host === Office.HostType.Excel) {
+    productionLog('Excel host detected');
+    
+    // Get references to the view elements
+    const appBody = document.getElementById('app-body');
+    const clientModeView = document.getElementById('client-mode-view');
+    const authenticationView = document.getElementById('authentication-view');
+
+    productionLog(`Elements found - appBody: ${!!appBody}, clientModeView: ${!!clientModeView}, authenticationView: ${!!authenticationView}`);
+
+    // >>> CHECK AUTH AND NAVIGATE DIRECTLY
+    console.log('🔍 Checking authentication on app initialization...');
+    console.log(`📍 URL: ${window.location.href}`);
+    console.log(`🌐 backendAPI available: ${!!backendAPI}`);
+    console.log(`🔐 backendAPI.isAuthenticated(): ${backendAPI ? backendAPI.isAuthenticated() : 'N/A'}`);
+    
+    // ACCESS CODE LAYER - DISABLED FOR DEVELOPMENT
+    const ACCESS_CODE_ENABLED = false; // Disabled - go straight to developer mode
+    // END ACCESS CODE LAYER
+    
+    // Check if user is authenticated - inline check to avoid scoping issues
+    const isAuthenticated = backendAPI && backendAPI.isAuthenticated();
+    console.log(`✅ Direct auth check returned: ${isAuthenticated}`);
+    
+    if (isAuthenticated) {
+      // User is authenticated, clear any force_logout flags
+      console.log('🧹 Clearing force_logout flags since user is authenticated');
+      localStorage.removeItem('force_logout');
+      sessionStorage.removeItem('force_logout');
+      
+      // ACCESS CODE VALIDATION - Validate access code with authenticated user's email
+      const validatedCode = sessionStorage.getItem('validated_access_code');
+      if (validatedCode) {
+        console.log('🔐 User is authenticated, checking if access code needs email validation');
+        
+        // Get user email from stored data
+        let userEmail = null;
+        const googleUser = localStorage.getItem('googleUser');
+        if (googleUser) {
+          try {
+            const userData = JSON.parse(googleUser);
+            userEmail = userData.email;
+          } catch (e) {
+            console.error('Error parsing googleUser data:', e);
+          }
+        }
+        
+        // Also check backendAPI user data
+        if (!userEmail && backendAPI && typeof backendAPI.getUserData === 'function') {
+          const backendUser = backendAPI.getUserData();
+          if (backendUser && backendUser.email) {
+            userEmail = backendUser.email;
+          }
+        }
+        
+        if (userEmail) {
+          console.log('🔐 Validating access code with authenticated user email:', userEmail);
+          
+          // Validate the access code with the user's email
+          fetch(`${CONFIG.backend.baseUrl}/validate-access-code`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+              code: validatedCode,
+              email: userEmail 
+            })
+          })
+          .then(response => response.json().then(data => ({ ok: response.ok, data })))
+          .then(({ ok, data }) => {
+            if (!ok) {
+              console.error('❌ Access code validation failed:', data.message);
+              
+              if (data.error === 'Code already redeemed') {
+                // Code has been claimed by a different email
+                console.log('🚫 Code already redeemed by different user, showing error view');
+                
+                // Clear everything
+                sessionStorage.clear();
+                localStorage.removeItem('google_access_token');
+                localStorage.removeItem('googleUser');
+                localStorage.removeItem('backend_access_token');
+                
+                // Show the error view with the specific message
+                showAccessCodeError(data.message || 'This access code has already been redeemed by a different email address.');
+                
+                return;
+              }
+            } else {
+              console.log('✅ Access code validated/claimed for user:', userEmail);
+              if (data.status === 'new_user') {
+                console.log('🆕 Access code claimed by user');
+              } else if (data.status === 'returning_user') {
+                console.log('👤 Access code verified for returning user');
+              }
+            }
+          })
+          .catch(error => {
+            console.error('Error validating access code:', error);
+          });
+        }
+      }
+      // END ACCESS CODE VALIDATION
+      
+      // Go directly to developer mode (bypassing authentication)
+      console.log('🚀 User authenticated - but going to developer mode');
+      showDeveloperMode();
+    } else {
+      // User is not authenticated, but still go to developer mode
+      console.log('🔓 User not authenticated - but going to developer mode anyway');
+      showDeveloperMode();
+    }
+    // <<< END ADDED
+
+    // Functions to switch views
+    function showDeveloperMode() {
+      if (appBody) appBody.style.display = 'flex'; // Matches .ms-welcome__main display if it's flex
+      if (clientModeView) clientModeView.style.display = 'none';
+      
+      // Update footer visibility
+      if (typeof updateFooterDisplay === 'function') {
+        updateFooterDisplay();
+      }
+      
+      // Initialize developer mode file attachment functionality
+      if (typeof initializeFileAttachmentDev === 'function') {
+        initializeFileAttachmentDev();
+      }
+      
+      // Initialize developer mode voice input functionality
+      if (typeof initializeVoiceInputDev === 'function') {
+        initializeVoiceInputDev();
+      }
+      
+      // Initialize developer mode textarea auto-resize functionality
+      if (typeof initializeTextareaAutoResizeDev === 'function') {
+        initializeTextareaAutoResizeDev();
+      }
+      
+      console.log("Developer Mode activated");
+    }
+
+    async function showClientMode() {
+      productionLog('showClientMode function called');
+      
+      // Authentication check removed - always show client mode
+      
+      productionLog('User is authenticated, proceeding to show client mode directly');
+      
+      productionLog(`Before changes - clientModeView display: ${clientModeView ? clientModeView.style.display : 'null'}`);
+      
+      if (appBody) {
+        appBody.style.display = 'none';
+        productionLog('Set appBody to display: none');
+      } else {
+        productionLog('appBody element not found!');
+      }
+      
+      if (clientModeView) {
+        clientModeView.style.display = 'flex';
+        productionLog('Set clientModeView to display: flex with row direction for sidebar layout');
+        
+        // Update footer visibility
+        if (typeof updateFooterDisplay === 'function') {
+          updateFooterDisplay();
+        }
+        
+                // Disabled - CSS flexbox layout handles everything now
+        // setTimeout(() => {
+        //     if (window.chatDebugger) {
+        //         window.chatDebugger.debugAndFix();
+        //     }
+        // }, 500);
+      } else {
+        productionLog('clientModeView element not found!');
+      }
+      
+      productionLog(`After changes - clientModeView display: ${clientModeView ? clientModeView.style.display : 'null'}`);
+      
+      // >>> PRIORITY: Initialize authentication and update UI
+      try {
+        // Initialize MSAL if not already done
+        if (typeof msal !== 'undefined' && !msalInstance) {
+          const msalInitialized = initializeMSAL();
+          productionLog(`MSAL initialization result: ${msalInitialized}`);
+        }
+        
+        // Check authentication state for Microsoft auth
+        if (typeof msal !== 'undefined' && msalInstance) {
+          checkAuthState(); // Check if user is already signed in
+          productionLog('Authentication state checked for client mode');
+        }
+        
+        // User IS authenticated (we already checked above)
+        // But we need to check if we have backend tokens or need to authenticate with backend
+        // Backend authentication removed - always show authenticated interface
+        showAuthenticatedInterface();
+        productionLog('Showing normal interface - standalone mode');
+        
+      } catch (error) {
+        console.error('Error in authentication initialization during client mode:', error);
+        // Continue anyway since user is authenticated
+        showAuthenticatedInterface();
+      }
+      // <<< END PRIORITY AUTHENTICATION CHECK
+      
+      // Initialize file attachment functionality (guarded to avoid duplicate bindings)
+      if (typeof initializeFileAttachment === 'function' && !window.__clientAttachInitialized) {
+        initializeFileAttachment();
+        window.__clientAttachInitialized = true;
+        productionLog('initializeFileAttachment called');
+      }
+      // Ensure attachment listeners are bound even if DOM timing changes
+      initClientAttachmentWithRetry();
+      
+      // Initialize voice input functionality
+      if (typeof initializeVoiceInput === 'function') {
+        initializeVoiceInput();
+        productionLog('initializeVoiceInput called');
+      }
+      
+      // Initialize multiline input handler (replaces old auto-resize)
+      if (multilineInputHandler && typeof multilineInputHandler.init === 'function') {
+        multilineInputHandler.init();
+        productionLog('MultilineInputHandler initialized');
+      }
+      
+      // Sidebar navigation removed - no longer needed
+      // initializeSidebarNavigation();
+      
+      productionLog("Client Mode activation completed");
+    }
+
+    // >>> ADDED: Authentication-first helper functions
+    function showAuthenticationFirst() {
+      productionLog('showAuthenticationFirst called - prioritizing authentication');
+      
+      // Keep the interface normal but hide user info since not authenticated
+      const userInfo = document.getElementById('user-info');
+      if (userInfo) {
+        userInfo.style.display = 'none';
+        productionLog('User info hidden');
+      }
+      
+      // Show the sign-in button in sidebar
+      const signInButton = document.getElementById('sign-in-button');
+      if (signInButton) {
+          signInButton.style.display = 'flex';
+        productionLog('Sidebar sign-in button shown');
+      }
+      
+      // Replace the chat input area with a signup/signin button
+      replaceInputWithAuthButton();
+      
+      productionLog('Authentication-first UI setup completed');
+    }
+    
+    function showAuthenticatedInterface() {
+      productionLog('showAuthenticatedInterface called - user is authenticated');
+      
+      // Hide the sign-in button
+      const signInButton = document.getElementById('sign-in-button');
+      if (signInButton) {
+        signInButton.style.display = 'none';
+        productionLog('Sign-in button hidden');
+      }
+      
+      // Show user info
+      const userInfo = document.getElementById('user-info');
+      if (userInfo) {
+        userInfo.style.display = 'flex';
+        productionLog('User info shown');
+      }
+      
+      // Restore normal chat input interface
+      restoreNormalInputInterface();
+
+      // Enable paste-to-attach on the main input
+      const clientTextArea = document.getElementById('user-input-client');
+      if (clientTextArea && !clientTextArea.dataset.pasteBound) {
+        clientTextArea.addEventListener('paste', async (e) => {
+          try {
+            if (!e.clipboardData || !e.clipboardData.items) return;
+            const items = e.clipboardData.items;
+            for (let i = 0; i < items.length; i += 1) {
+              const it = items[i];
+              if (it.kind === 'file') {
+                const blob = it.getAsFile();
+                if (blob && blob.type && blob.type.startsWith('image/')) {
+                  console.log('[Paste-Attach] Image detected from clipboard');
+                  // Name the file if clipboard lacks a name
+                  const ext = blob.type.includes('png') ? 'png' : (blob.type.includes('webp') ? 'webp' : 'jpg');
+                  const fileName = `pasted-${Date.now()}.${ext}`;
+                  const file = new File([blob], fileName, { type: blob.type });
+                  const attachFn = (typeof handleFileAttachment === 'function') ? handleFileAttachment : (window.__plannerHandleFileAttachment || null);
+                  if (attachFn) {
+                    // Prevent text paste insertion
+                    e.preventDefault();
+                    await attachFn(file);
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('Paste-to-attach failed:', err);
+          }
+        });
+        clientTextArea.dataset.pasteBound = 'true';
+      }
+      
+      // Auto-resize functionality will be initialized later by initializeTextareaAutoResize
+      
+      // Update UI with user information
+      updateSignedInStatus();
+      updateAuthUI(true);
+      
+      // Initialize user data with credits information
+      console.log('🔧 Attempting to initialize user data after Google authentication...');
+      initializeUserData().then(() => {
+        console.log('✅ User data initialized successfully after authentication');
+        
+        // Check if user has credits
+        const userCredits = getUserCredits();
+        console.log(`💰 User credits: ${userCredits}`);
+        
+        // If user has 0 credits, show subscription welcome view
+        if (userCredits === 0) {
+          console.log('⚠️ User has 0 credits - showing subscription welcome view');
+          showSubscriptionWelcome();
+          return;
+        }
+        
+        // Transition to client mode view
+        console.log('🔄 Transitioning to client mode view...');
+        
+        // Hide all other views
+        const authView = document.getElementById('authentication-view');
+        const appBody = document.getElementById('app-body');
+        const clientModeView = document.getElementById('client-mode-view');
+        const subscriptionView = document.getElementById('subscription-welcome-view');
+        
+        if (authView) authView.style.display = 'none';
+        if (appBody) appBody.style.display = 'none';
+        if (subscriptionView) subscriptionView.style.display = 'none';
+        
+        // Show client mode view
+        if (clientModeView) {
+          clientModeView.style.display = 'flex';
+          console.log('✅ Client mode view displayed');
+          
+          // Initialize developer mode visibility now that the UI is loaded
+          setTimeout(() => {
+            console.log("🎯 Initializing developer mode from client view...");
+            initializeDeveloperModeVisibility();
+          }, 200);
+        } else {
+          console.warn('⚠️ Client mode view not found');
+        }
+      }).catch(error => {
+        console.warn('Failed to initialize user data in showAuthenticatedInterface:', error);
+        console.log('🔧 Using fallback display update');
+        forceUpdateUserDisplay();
+        
+        // Still check credits even if there was an error
+        try {
+          const userCredits = getUserCredits();
+          if (userCredits === 0) {
+            console.log('⚠️ User has 0 credits (fallback check) - showing subscription welcome view');
+            showSubscriptionWelcome();
+          }
+        } catch (creditError) {
+          console.error('Failed to check credits:', creditError);
+        }
+      });
+      
+      productionLog('Authenticated interface setup completed');
+    }
+    
+    function replaceInputWithAuthButton() {
+      productionLog('Replacing input area with authentication button');
+      
+      // Find the input area wrapper
+      const inputWrapper = document.getElementById('client-input-wrapper');
+      if (!inputWrapper) {
+        productionLog('Input wrapper not found');
+        return;
+      }
+      
+      // Hide the normal input elements
+      const inputBar = document.getElementById('chatgpt-input-bar');
+      const attachedFiles = document.getElementById('attached-files-container');
+      const attachedFilesList = document.getElementById('attached-files-list');
+      const loadingAnimation = document.getElementById('loading-animation-client');
+      
+      if (inputBar) {
+        inputBar.style.display = 'none';
+        productionLog('Input bar hidden');
+      }
+      if (attachedFiles) {
+        attachedFiles.style.display = 'none';
+        productionLog('Attached files hidden');
+      }
+      if (loadingAnimation) {
+        loadingAnimation.style.display = 'none';
+        productionLog('Loading animation hidden');
+      }
+      
+      // Create or show the auth button
+      let authButton = document.getElementById('main-auth-button');
+      if (!authButton) {
+        authButton = document.createElement('div');
+        authButton.id = 'main-auth-button';
+        authButton.style.cssText = `
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          padding: 16px;
+          margin: 20px auto;
+          max-width: 400px;
+        `;
+        
+        authButton.innerHTML = `
+          <button class="signup-signin-button" style="
+            background: #1f2937;
+            color: white;
+            border: 1px solid #374151;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            min-width: 250px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+          ">
+            <svg style="width: 18px; height: 18px; margin-right: 8px;" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            Continue with Google
+          </button>
+        `;
+        
+        inputWrapper.appendChild(authButton);
+        productionLog('Auth button created and added');
+      } else {
+        authButton.style.display = 'flex';
+        productionLog('Auth button shown');
+      }
+      
+      // Add click handler to the button
+      const button = authButton.querySelector('.signup-signin-button');
+      if (button) {
+        button.onclick = handleSignInClick;
+        
+        // Add hover effects for Google button
+        button.onmouseenter = function() {
+          this.style.transform = 'translateY(-1px)';
+          this.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.15)';
+          this.style.backgroundColor = '#374151';
+          this.style.borderColor = '#4b5563';
+        };
+        button.onmouseleave = function() {
+          this.style.transform = 'translateY(0)';
+          this.style.boxShadow = '0 1px 2px rgba(0, 0, 0, 0.05)';
+          this.style.backgroundColor = '#1f2937';
+          this.style.borderColor = '#374151';
+        };
+        
+        productionLog('Auth button handlers attached');
+      }
+    }
+    
+    function restoreNormalInputInterface() {
+      productionLog('Restoring normal input interface');
+      
+      // Hide the auth button
+      const authButton = document.getElementById('main-auth-button');
+      if (authButton) {
+        authButton.style.display = 'none';
+        productionLog('Auth button hidden');
+      }
+      
+      // Show the normal input elements
+      const inputBar = document.getElementById('chatgpt-input-bar');
+      const attachedFiles = document.getElementById('attached-files-container');
+      const attachedFilesList = document.getElementById('attached-files-list');
+      const loadingAnimation = document.getElementById('loading-animation-client');
+      
+      if (inputBar) {
+        inputBar.style.display = 'block';
+        productionLog('Input bar restored');
+      }
+      if (attachedFiles) {
+        const hasItems = attachedFilesList && attachedFilesList.children && attachedFilesList.children.length > 0;
+        attachedFiles.style.display = hasItems ? 'block' : 'none';
+        productionLog(`Attached files ${hasItems ? 'restored (visible)' : 'hidden (no items)'}`);
+      }
+      // Note: loadingAnimation should remain hidden until needed
+      
+      productionLog('Normal input interface restored');
+
+      // Re-bind attachment listeners after restoring input UI
+      initClientAttachmentWithRetry();
+    }
+
+    // Ensures the client attach-file button has working listeners,
+    // retrying briefly to handle dynamic DOM timing.
+    function initClientAttachmentWithRetry() {
+      if (window.__clientAttachInitRunning) {
+        return;
+      }
+      window.__clientAttachInitRunning = true;
+
+      let attempts = 0;
+      const maxAttempts = 20; // ~4s total
+      const intervalId = setInterval(() => {
+        attempts += 1;
+        const attachBtn = document.getElementById('attach-file-client');
+        const fileInput = document.getElementById('file-input-client');
+
+        if (attachBtn && fileInput) {
+          clearInterval(intervalId);
+          window.__clientAttachInitRunning = false;
+
+          // Call canonical initializer once if not already initialized
+          try {
+            if (typeof initializeFileAttachment === 'function' && !window.__clientAttachInitialized) {
+              initializeFileAttachment();
+              window.__clientAttachInitialized = true;
+              productionLog('initializeFileAttachment bound via retry helper');
+            }
+          } catch (err) {
+            console.warn('initializeFileAttachment invocation failed, considering fallback listeners', err);
+          }
+
+          // Mark as bound so we don't attach fallback listeners if the canonical initializer handled it
+          attachBtn.dataset.listenerBound = 'true';
+          fileInput.dataset.listenerBound = 'true';
+
+          // Fallback: only if canonical initializer is unavailable
+          if (!window.__clientAttachInitialized) {
+            if (!attachBtn.dataset.fallbackListener) {
+              attachBtn.addEventListener('click', () => {
+                console.log('[Client-Attach] Attach file button clicked');
+                fileInput.click();
+              });
+              attachBtn.dataset.fallbackListener = 'true';
+            }
+            if (!fileInput.dataset.fallbackListener) {
+              fileInput.addEventListener('change', (e) => {
+                const count = e && e.target && e.target.files ? e.target.files.length : 0;
+                console.log('[Client-Attach] Files selected:', count);
+              });
+              fileInput.dataset.fallbackListener = 'true';
+            }
+          }
+        } else if (attempts >= maxAttempts) {
+          clearInterval(intervalId);
+          window.__clientAttachInitRunning = false;
+          productionLog('Client attach elements not found after retries');
+        }
+      }, 200);
+    }
+    
+    function handleSignInClick() {
+      productionLog('Google Sign-in button clicked');
+      
+      // Use Google authentication instead of Microsoft
+      handleGoogleSignIn();
+    }
+    
+    function simulateAuthentication() {
+      // This is a temporary function for development when Azure credentials aren't set up
+      productionLog('Simulating authentication for development');
+      
+      // Create a mock user
+      currentUser = {
+        name: 'Demo User',
+        username: 'demo@example.com',
+        localAccountId: 'demo-user-123'
+      };
+      
+      // Update UI to show authenticated state
+      showAuthenticatedInterface();
+      
+      showMessage('Demo authentication successful! (For production, please configure Azure authentication)');
+      productionLog('Demo authentication completed');
+    }
+    // <<< END ADDED AUTHENTICATION HELPERS
+
+    let sidebarInitialized = false;
+    // Sidebar navigation functionality
+    function initializeSidebarNavigation() {
+      if (sidebarInitialized) {
+        console.log("Sidebar navigation already initialized. Skipping.");
+        return;
+      }
+      const chatTab = document.getElementById("chat-tab");
+      const subscriptionTab = document.getElementById("subscription-tab");
+      const chatPanel = document.getElementById('client-chat-container');
+      const subscriptionPanel = document.getElementById('subscription-panel');
+
+          function switchToTab(activeTab, activePanel) {
+        // Remove active class from all tabs
+        document.querySelectorAll('.sidebar-tab').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        
+        // Hide both panels by setting inline display styles
+        console.log('=== BEFORE HIDING PANELS ===');
+        console.log('Chat panel display:', chatPanel ? chatPanel.style.display : 'null');
+        console.log('Subscription panel display:', subscriptionPanel ? subscriptionPanel.style.display : 'null');
+        
+        if (chatPanel) {
+            chatPanel.style.display = 'none';
+            console.log('Chat panel hidden');
+        }
+        if (subscriptionPanel) {
+            subscriptionPanel.style.display = 'none';
+            console.log('Subscription panel hidden');
+        }
+        
+        console.log('=== AFTER HIDING PANELS ===');
+        console.log('Chat panel display:', chatPanel ? chatPanel.style.display : 'null');
+        console.log('Subscription panel display:', subscriptionPanel ? subscriptionPanel.style.display : 'null');
+        
+        // Show the selected panel
+        if (activePanel === subscriptionPanel) {
+            subscriptionPanel.style.display = 'block'; // Use inline style since it's not a content-panel
+            subscriptionPanel.style.position = 'absolute'; // Position absolutely to occupy same space as chat
+            subscriptionPanel.style.top = '0'; // Start at top of parent
+            subscriptionPanel.style.left = '0'; // Start at left of parent  
+            subscriptionPanel.style.right = '0'; // Stretch to right edge
+            subscriptionPanel.style.bottom = '0'; // Stretch to bottom edge
+            subscriptionPanel.style.overflow = 'auto'; // Allow scrolling if needed
+            subscriptionPanel.style.zIndex = '10'; // Ensure it's on top
+            console.log('=== AFTER SHOWING SUBSCRIPTION PANEL ===');
+            console.log('Subscription panel display:', subscriptionPanel.style.display);
+            console.log('Subscription panel getBoundingClientRect():', subscriptionPanel.getBoundingClientRect());
+        } else if (activePanel === chatPanel) {
+            chatPanel.style.display = 'flex';
+            chatPanel.style.position = 'relative'; // Ensure chat panel uses normal positioning
+            console.log('=== AFTER SHOWING CHAT PANEL ===');
+            console.log('Chat panel display:', chatPanel.style.display);
+        }
+        
+        // Activate selected tab
+        activeTab.classList.add('active');
+    }
+
+      // Chat tab click handler
+      if (chatTab && chatPanel) {
+        chatTab.addEventListener('click', () => {
+          console.log('Switching to chat panel');
+          switchToTab(chatTab, chatPanel);
+        });
+      }
+
+      // Subscription tab click handler
+      if (subscriptionTab && subscriptionPanel) {
+        subscriptionTab.addEventListener('click', () => {
+          console.log('Subscription tab clicked');
+          console.log('subscriptionPanel element:', subscriptionPanel);
+          console.log('chatPanel element:', chatPanel);
+          switchToTab(subscriptionTab, subscriptionPanel);
+          
+          // Initialize pricing buttons when subscription panel is shown
+          setTimeout(() => {
+            console.log('Initializing pricing buttons after tab switch');
+            initializePricingButtons();
+          }, 100); // Small delay to ensure panel is fully visible
+        });
+      } else {
+        console.error('Subscription tab or panel not found:', {
+          subscriptionTab: !!subscriptionTab,
+          subscriptionPanel: !!subscriptionPanel
+        });
+      }
+
+      sidebarInitialized = true;
+      console.log('Sidebar navigation initialized');
+    }
+
+    // >>> ADDED: Function to initialize pricing plan buttons
+    function initializePricingButtons() {
+        console.log('=== initializePricingButtons called ===');
+        const subscriptionPanel = document.getElementById('subscription-panel');
+        if (!subscriptionPanel) {
+            console.error('Subscription panel not found in DOM');
+            return;
+        }
+        
+        const isVisible = subscriptionPanel.style.display !== 'none';
+        const computedStyle = window.getComputedStyle(subscriptionPanel);
+        const computedDisplay = computedStyle.display;
+        
+        console.log(`Subscription panel found:`);
+        console.log(`- Style display: ${subscriptionPanel.style.display}`);
+        console.log(`- Computed display: ${computedDisplay}`);
+        console.log(`- Is visible: ${isVisible}`);
+        console.log(`- Panel HTML (first 200 chars):`, subscriptionPanel.innerHTML.substring(0, 200));
+        
+        const planButtons = subscriptionPanel.querySelectorAll('.plan-button');
+        console.log(`Found ${planButtons.length} plan buttons in subscription panel`);
+        
+        if (planButtons.length === 0) {
+            console.warn('No plan buttons found - checking panel structure:');
+            console.log('Plan cards:', subscriptionPanel.querySelectorAll('.plan-card').length);
+            console.log('All buttons:', subscriptionPanel.querySelectorAll('button').length);
+            return;
+        }
+        
+        planButtons.forEach((button, index) => {
+            console.log(`Processing button ${index}:`, button.textContent);
+            
+            // Check if button already has listener
+            if (button.hasAttribute('data-listener-attached')) {
+                console.log(`Button ${index} already has listener attached`);
+                return;
+            }
+            
+            console.log(`Adding listener to button ${index}`);
+            
+            // Add click event listener
+            button.addEventListener('click', function(e) {
+                e.preventDefault();
+                console.log(`=== Button ${index} clicked! ===`);
+                
+                // Get the plan card parent to determine which plan was selected
+                const planCard = button.closest('.plan-card');
+                if (!planCard) {
+                    console.error('Could not find plan card parent');
+                    return;
+                }
+                
+                const planNameElement = planCard.querySelector('.plan-name');
+                if (!planNameElement) {
+                    console.error('Could not find plan name element');
+                    return;
+                }
+                
+                const planName = planNameElement.textContent;
+                console.log(`Pricing plan selected: ${planName}`);
+                
+                // Handle different plan selections
+                handlePlanSelection(planName.toLowerCase(), planCard);
+            });
+            
+            // Mark as having listener attached
+            button.setAttribute('data-listener-attached', 'true');
+            console.log(`Button ${index} listener attached successfully`);
+        });
+        
+        console.log('=== Pricing plan buttons initialization complete ===');
+    }
+
+    // >>> ADDED: Function to handle plan selection
+    function handlePlanSelection(planName, planCard) {
+        console.log(`Handling selection for plan: ${planName}`);
+        
+        // Remove active class from all plan cards
+        document.querySelectorAll('.plan-card').forEach(card => {
+            card.classList.remove('selected');
+        });
+        
+        // Add active class to selected plan
+        planCard.classList.add('selected');
+        
+        // Handle specific plan logic
+        switch(planName) {
+            case 'starter':
+                handleStarterPlan();
+                break;
+            case 'professional':
+                handleProfessionalPlan();
+                break;
+            case 'unlimited':
+                handleUnlimitedPlan();
+                break;
+            default:
+                console.warn(`Unknown plan: ${planName}`);
+        }
+    }
+
+    // >>> ADDED: Plan-specific handlers
+    function handleStarterPlan() {
+        console.log('handleStarterPlan called');
+        const message = 'Starter plan selected! This would redirect to payment processing.';
+        console.log(message);
+        
+        // Try to show message if function exists
+        if (typeof showMessage === 'function') {
+            showMessage(message);
+        } else {
+            alert(message); // Fallback
+        }
+    }
+
+    function handleProfessionalPlan() {
+        console.log('handleProfessionalPlan called');
+        const message = 'Professional plan selected! This would redirect to payment processing.';
+        console.log(message);
+        
+        // Try to show message if function exists
+        if (typeof showMessage === 'function') {
+            showMessage(message);
+        } else {
+            alert(message); // Fallback
+        }
+    }
+
+    function handleUnlimitedPlan() {
+        console.log('handleUnlimitedPlan called');
+        
+        // Handle the special case of the API key input in the unlimited plan
+        const apiKeyInput = document.getElementById('claude-api-key');
+        let message = 'Unlimited plan selected! This would redirect to payment processing.';
+        
+        if (apiKeyInput) {
+            const apiKey = apiKeyInput.value.trim();
+            if (apiKey) {
+                console.log('Claude API key provided for unlimited plan');
+                message = 'Unlimited plan selected with custom API key! This would redirect to payment processing.';
+            }
+        }
+        
+        console.log(message);
+        
+        // Try to show message if function exists
+        if (typeof showMessage === 'function') {
+            showMessage(message);
+        } else {
+            alert(message); // Fallback
+        }
+    }
+
+    // >>> ADDED: Function that redirects based on auth status instead of showing menu
+    function showStartupMenu() {
+      // No longer show startup menu - redirect based on auth status
+      productionLog('showStartupMenu called - redirecting based on auth status');
+      
+      const isAuthenticated = isUserAuthenticated();
+      
+      if (isAuthenticated) {
+        productionLog('User authenticated - redirecting to client mode');
+        showClientMode();
+      } else {
+        productionLog('User not authenticated - redirecting to authentication view');
+        showAuthentication();
+      }
+    }
+    // <<< END ADDED
+
+    // ACCESS CODE VIEW FUNCTION (can be removed to revert)
+    async function showAccessCode() {
+      console.log('🔐 showAccessCode function called');
+      
+      // Hide all views
+      if (appBody) appBody.style.display = 'none';
+      if (clientModeView) clientModeView.style.display = 'none';
+      if (authenticationView) authenticationView.style.display = 'none';
+      
+      // Hide subscription welcome view
+      const subscriptionView = document.getElementById('subscription-welcome-view');
+      if (subscriptionView) subscriptionView.style.display = 'none';
+      
+      // Load access code view HTML directly
+      try {
+        // Check if access code view already exists
+        let accessCodeView = document.getElementById('access-code-view');
+        
+        if (!accessCodeView) {
+          // Create the access code view container
+          accessCodeView = document.createElement('div');
+          accessCodeView.id = 'access-code-view';
+          accessCodeView.className = 'ms-welcome__main';
+          accessCodeView.style.cssText = 'display: flex; justify-content: center; align-items: center; flex-direction: column; height: 100vh;';
+          
+          // Insert after authentication view or at the end of body
+          const authView = document.getElementById('authentication-view');
+          if (authView && authView.parentNode) {
+            authView.parentNode.insertBefore(accessCodeView, authView.nextSibling);
+          } else {
+            document.body.appendChild(accessCodeView);
+          }
+        }
+        
+        console.log('🔐 Loading access code view HTML');
+        const response = await fetch('./views/accessCode.html');
+        if (response.ok) {
+          const html = await response.text();
+          accessCodeView.innerHTML = html;
+          accessCodeView.style.display = 'flex';
+          
+          // Initialize the access code module after view loads
+          if (accessCodeModule && accessCodeModule.initialize) {
+            console.log('🔐 Initializing access code module');
+            await accessCodeModule.initialize();
+          }
+        } else {
+          console.log('⚠️ Failed to load access code view HTML:', response.status);
+          // Fallback to authentication
+          showAuthentication();
+        }
+      } catch (error) {
+        console.error('Error loading access code view:', error);
+        // Fallback to authentication
+        showAuthentication();
+      }
+    }
+    // END ACCESS CODE FUNCTION
+
+    // Show access code error view
+    async function showAccessCodeError(errorMessage) {
+      console.log('🚫 showAccessCodeError function called with message:', errorMessage);
+      
+      // Hide other views
+      if (appBody) appBody.style.display = 'none';
+      if (clientModeView) clientModeView.style.display = 'none';
+      if (authenticationView) authenticationView.style.display = 'none';
+      
+      // Hide subscription views
+      const subscriptionView = document.getElementById('subscription-welcome-view');
+      if (subscriptionView) subscriptionView.style.display = 'none';
+      
+      // Hide access code view if visible
+      const accessCodeView = document.getElementById('access-code-view');
+      if (accessCodeView) accessCodeView.style.display = 'none';
+      
+      // Create container for error view if it doesn't exist
+      let errorContainer = document.getElementById('access-code-error-container');
+      if (!errorContainer) {
+        errorContainer = document.createElement('div');
+        errorContainer.id = 'access-code-error-container';
+        document.body.appendChild(errorContainer);
+      }
+      
+      try {
+        // Load the error view HTML
+        const response = await fetch('views/accessCodeError.html');
+        if (response.ok) {
+          const html = await response.text();
+          errorContainer.innerHTML = html;
+          
+          // Update the error message if provided
+          if (errorMessage) {
+            const errorDetailsText = document.getElementById('error-details-text');
+            if (errorDetailsText) {
+              errorDetailsText.textContent = errorMessage;
+            }
+          }
+          
+          // Set up close button handler
+          const closeButton = document.getElementById('close-error-button');
+          if (closeButton) {
+            closeButton.addEventListener('click', function() {
+              // Clear the invalid access code from session storage
+              sessionStorage.removeItem('validated_access_code');
+              sessionStorage.removeItem('access_code_status');
+              
+              // Hide error view and show access code view
+              errorContainer.style.display = 'none';
+              showAccessCode();
+            });
+          }
+          
+          // Show the error container
+          errorContainer.style.display = 'block';
+          
+        } else {
+          console.error('Failed to load access code error view');
+          // Fallback: just show access code view
+          showAccessCode();
+        }
+      } catch (error) {
+        console.error('Error loading access code error view:', error);
+        // Fallback: just show access code view
+        showAccessCode();
+      }
+    }
+    
+    function showAuthentication() {
+      // Authentication removed - always show client mode
+      showClientMode();
+      return;
+      
+      // Hide subscription welcome view
+      const subscriptionView = document.getElementById('subscription-welcome-view');
+      if (subscriptionView) subscriptionView.style.display = 'none';
+      
+      // Update footer visibility
+      if (typeof updateFooterDisplay === 'function') {
+        updateFooterDisplay();
+      }
+      
+      // Set up Google Sign-In button handler
+      setupGoogleSignInButton();
+      
+      // Microsoft and API Key sign-in buttons removed
+      
+      console.log("Authentication view activated");
+    }
+
+    // Show subscription welcome view for users with 0 credits
+    // Function to show subscription plans view
+    async function showSubscriptionPlans() {
+      productionLog('showSubscriptionPlans function called');
+      
+      // First, load the subscription plans HTML if not already loaded
+      const container = document.getElementById('subscription-plans-view-container');
+      if (container && !document.getElementById('subscription-plans-view')) {
+        try {
+          const response = await fetch('views/subscription-plans.html');
+          const html = await response.text();
+          container.innerHTML = html;
+          productionLog('Subscription plans HTML loaded');
+          
+          // Attach event handlers directly
+          attachSubscriptionPlanHandlers();
+          
+        } catch (error) {
+          console.error('Failed to load subscription plans:', error);
+          showError('Failed to load subscription plans');
+          return;
+        }
+      } else {
+        // Re-attach handlers if HTML already loaded
+        attachSubscriptionPlanHandlers();
+      }
+      
+      // Hide subscription welcome view
+      const subscriptionWelcomeView = document.getElementById('subscription-welcome-view');
+      if (subscriptionWelcomeView) {
+        subscriptionWelcomeView.style.display = 'none';
+      }
+      
+      // Show subscription plans view
+      const plansView = document.getElementById('subscription-plans-view');
+      if (plansView) {
+        plansView.style.display = 'block';
+      }
+      
+      productionLog('Subscription plans view displayed');
+    }
+    
+    // Function to attach subscription plan event handlers
+    function attachSubscriptionPlanHandlers() {
+      productionLog('Attaching subscription plan handlers');
+      
+      // Back button
+      const backButton = document.getElementById('plans-back-button');
+      if (backButton && !backButton.hasAttribute('data-listener-attached')) {
+        backButton.addEventListener('click', () => {
+          productionLog('Back button clicked from plans view');
+          const plansView = document.getElementById('subscription-plans-view');
+          const subscriptionView = document.getElementById('subscription-welcome-view');
+          if (plansView) plansView.style.display = 'none';
+          if (subscriptionView) subscriptionView.style.display = 'flex';
+        });
+        backButton.setAttribute('data-listener-attached', 'true');
+        productionLog('Back button handler attached');
+      }
+      
+      // Subscribe buttons
+      document.querySelectorAll('.subscribe-button').forEach(button => {
+        if (!button.hasAttribute('data-listener-attached')) {
+          button.addEventListener('click', async () => {
+            const planId = button.dataset.plan;
+            productionLog(`Subscribe button clicked for plan: ${planId}`);
+            await handlePlanSubscription(planId);
+          });
+          button.setAttribute('data-listener-attached', 'true');
+        }
+      });
+      
+      // Contact button
+      const contactButton = document.querySelector('.contact-button');
+      if (contactButton && !contactButton.hasAttribute('data-listener-attached')) {
+        contactButton.addEventListener('click', () => {
+          productionLog('Contact button clicked');
+          window.open('https://ebitdai.co/demo-request', '_blank');
+        });
+        contactButton.setAttribute('data-listener-attached', 'true');
+      }
+      
+      // Manage subscription button
+      const manageButton = document.getElementById('manage-subscription-button');
+      if (manageButton && !manageButton.hasAttribute('data-listener-attached')) {
+        manageButton.addEventListener('click', async () => {
+          productionLog('Manage subscription clicked');
+          await handleManageSubscription();
+        });
+        manageButton.setAttribute('data-listener-attached', 'true');
+      }
+    }
+    
+    // Function to handle plan subscription
+    async function handlePlanSubscription(planId) {
+      productionLog(`Starting subscription for plan: ${planId}`);
+      
+      // Check authentication
+      if (!backendAPI?.isAuthenticated()) {
+        showError('Please sign in to subscribe');
+        return;
+      }
+      
+      // Get the button and show loading state
+      const button = document.querySelector(`[data-plan="${planId}"]`);
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Redirecting to checkout...';
+      }
+      
+      try {
+        // Price IDs for different plans
+        const priceIds = {
+          pro: 'price_XXXXXX',      // TODO: Replace with your Pro plan price ID ($40/month)
+          business: 'price_1RuHkUQQXsHcZw1brosGu5TR', // Business plan ($100/month)
+          enterprise: null
+        };
+        
+        console.log('Using price ID:', priceIds[planId], 'for plan:', planId);
+        
+        const priceId = priceIds[planId];
+        if (!priceId) {
+          throw new Error('Invalid plan selected');
+        }
+        
+        // Create checkout session
+        const response = await backendAPI.createCheckoutSession(priceId);
+        
+        if (response.url) {
+          window.open(response.url, '_blank');
+          showMessage('Opening secure checkout...', 'success');
+          
+          // Poll for subscription update
+          setTimeout(async () => {
+            await refreshUserData();
+          }, 5000);
+        } else {
+          throw new Error('No checkout URL received');
+        }
+      } catch (error) {
+        console.error('Subscription error:', error);
+        showError(error.message || 'Failed to start subscription');
+      } finally {
+        // Reset button state
+        if (button) {
+          button.disabled = false;
+          button.innerHTML = '<span class="button-icon">💳</span> Begin Free Trial';
+        }
+      }
+    }
+    
+    // Function to handle manage subscription
+    async function handleManageSubscription() {
+      productionLog('Opening subscription management');
+      
+      if (!backendAPI?.isAuthenticated()) {
+        showError('Please sign in to manage subscription');
+        return;
+      }
+      
+      const button = document.getElementById('manage-subscription-button');
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Opening portal...';
+      }
+      
+      try {
+        // Create portal session
+        const response = await fetch(`${CONFIG.backend.baseUrl}/create-portal-session`, {
+          method: 'POST',
+          headers: backendAPI.getAuthHeaders()
+        });
+        
+        const data = await response.json();
+        
+        if (data.url) {
+          window.open(data.url, '_blank');
+          showMessage('Opening customer portal...', 'success');
+        } else {
+          throw new Error('No portal URL received');
+        }
+      } catch (error) {
+        console.error('Portal error:', error);
+        showError('Failed to open customer portal');
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = 'Manage Existing Subscription';
+        }
+      }
+    }
+    
+    function showSubscriptionWelcome() {
+      productionLog('showSubscriptionWelcome function called');
+      
+      // Hide all views
+      if (appBody) appBody.style.display = 'none';
+      if (clientModeView) clientModeView.style.display = 'none';
+      if (authenticationView) authenticationView.style.display = 'none';
+      
+      // Show subscription welcome view
+      const subscriptionView = document.getElementById('subscription-welcome-view');
+      if (subscriptionView) {
+        subscriptionView.style.display = 'flex';
+        productionLog('Subscription welcome view displayed');
+        
+        // Set up sign-out button handler
+        const signOutBtn = document.getElementById('subscription-sign-out');
+        if (signOutBtn && !signOutBtn.hasAttribute('data-listener-attached')) {
+          signOutBtn.addEventListener('click', () => {
+            productionLog('Sign out from subscription welcome view');
+            signOutUser();
+          });
+          signOutBtn.setAttribute('data-listener-attached', 'true');
+          productionLog('Subscription sign-out button handler attached');
+        }
+        
+        // Set up Choose Your Plan button handler
+        const choosePlanBtn = document.getElementById('choose-plan-button');
+        if (choosePlanBtn && !choosePlanBtn.hasAttribute('data-listener-attached')) {
+          choosePlanBtn.addEventListener('click', async () => {
+            productionLog('Choose Your Plan button clicked');
+            await showSubscriptionPlans();
+          });
+          choosePlanBtn.setAttribute('data-listener-attached', 'true');
+          productionLog('Choose Plan button handler attached');
+        }
+        
+        // Set up refresh credits button handler
+        const refreshBtn = document.getElementById('subscription-refresh-credits');
+        if (refreshBtn && !refreshBtn.hasAttribute('data-listener-attached')) {
+          refreshBtn.addEventListener('click', async () => {
+            productionLog('Refresh credits button clicked');
+            
+            // Show loading state
+            const originalHTML = refreshBtn.innerHTML;
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = '<span class="ms-Button-label">Checking credits...</span>';
+            
+            try {
+              // Refresh user data to get latest credits
+              productionLog('Refreshing user data...');
+              const refreshSuccess = await initializeUserData();
+              
+              if (refreshSuccess) {
+                // Check if user now has credits
+                const userCredits = getUserCredits();
+                productionLog(`User credits after refresh: ${userCredits}`);
+                
+                if (userCredits > 0) {
+                  productionLog('User has credits, transitioning to client mode');
+                  
+                  // Hide subscription welcome view
+                  subscriptionView.style.display = 'none';
+                  
+                  // Show client mode view
+                  const clientModeView = document.getElementById('client-mode-view');
+                  if (clientModeView) {
+                    clientModeView.style.display = 'flex';
+                    productionLog('Client mode view displayed');
+                    
+                    // Update header and footer displays
+                    updateFooterDisplay();
+                    updateAccountModal();
+                    
+                    // Initialize client mode features
+                    initClientAttachmentWithRetry();
+                    initializeSidebarNavigation();
+                  } else {
+                    console.error('Client mode view not found');
+                  }
+                } else {
+                  // Still no credits, show a message
+                  productionLog('Still no credits after refresh');
+                  refreshBtn.innerHTML = originalHTML;
+                  refreshBtn.disabled = false;
+                  
+                  // Show a temporary message
+                  const tempMessage = document.createElement('div');
+                  tempMessage.style.cssText = 'color: #cc0000; margin-top: 8px; font-size: 14px; text-align: center;';
+                  tempMessage.textContent = 'No credits found. Please complete your subscription at ebitdai.co/credits';
+                  refreshBtn.parentElement.appendChild(tempMessage);
+                  
+                  // Remove message after 5 seconds
+                  setTimeout(() => {
+                    tempMessage.remove();
+                  }, 5000);
+                }
+              } else {
+                throw new Error('Failed to refresh user data');
+              }
+            } catch (error) {
+              console.error('Error refreshing credits:', error);
+              refreshBtn.innerHTML = originalHTML;
+              refreshBtn.disabled = false;
+              
+              // Show error message
+              const errorMessage = document.createElement('div');
+              errorMessage.style.cssText = 'color: #cc0000; margin-top: 8px; font-size: 14px; text-align: center;';
+              errorMessage.textContent = 'Error checking credits. Please try again.';
+              refreshBtn.parentElement.appendChild(errorMessage);
+              
+              // Remove message after 3 seconds
+              setTimeout(() => {
+                errorMessage.remove();
+              }, 3000);
+            }
+          });
+          refreshBtn.setAttribute('data-listener-attached', 'true');
+          productionLog('Refresh credits button handler attached');
+        }
+      } else {
+        console.error('Subscription welcome view not found');
+      }
+    }
+    
+    // Handle Microsoft Sign-In
+    function handleMicrosoftSignIn() {
+      console.log("Microsoft Sign-In clicked");
+      
+      // Check if user already signed in with MSAL
+      if (typeof msalInstance !== 'undefined' && msalInstance) {
+        handleSignInClick(); // Use existing MSAL sign-in
+      } else {
+        showError("Microsoft authentication is not available. Please try Google Sign-In or use an API Key.");
+      }
+    }
+    
+    // Show API Key Dialog
+    function showApiKeyDialog() {
+      console.log("API Key Sign-In clicked");
+      
+      // Create a simple dialog for API key input
+      const dialog = document.createElement('div');
+      dialog.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        z-index: 10000;
+        width: 90%;
+        max-width: 400px;
+      `;
+      
+      dialog.innerHTML = `
+        <h3 style="margin-top: 0;">Enter Your OpenAI API Key</h3>
+        <p style="color: #666; font-size: 14px;">Your API key will be stored locally and used for AI requests.</p>
+        <input type="password" id="api-key-input" placeholder="sk-..." style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px;">
+        <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+          <button id="api-key-cancel" style="padding: 8px 16px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;">Cancel</button>
+          <button id="api-key-submit" style="padding: 8px 16px; border: none; background: #333; color: white; border-radius: 4px; cursor: pointer;">Sign In</button>
+        </div>
+      `;
+      
+      // Add backdrop
+      const backdrop = document.createElement('div');
+      backdrop.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 9999;
+      `;
+      
+      document.body.appendChild(backdrop);
+      document.body.appendChild(dialog);
+      
+      // Focus input
+      const input = document.getElementById('api-key-input');
+      input.focus();
+      
+      // Handle cancel
+      document.getElementById('api-key-cancel').onclick = () => {
+        backdrop.remove();
+        dialog.remove();
+      };
+      
+      // Handle submit
+      document.getElementById('api-key-submit').onclick = () => {
+        const apiKey = input.value.trim();
+        if (apiKey && apiKey.startsWith('sk-')) {
+          // Store API key
+          localStorage.setItem('user_api_key', apiKey);
+          localStorage.setItem('auth_method', 'api_key');
+          
+          // Create mock user data
+          const userData = {
+            name: 'API Key User',
+            email: 'api@user.local',
+            picture: null,
+            credits: 100,
+            subscription: 'Free'
+          };
+          
+          localStorage.setItem('user_data', JSON.stringify(userData));
+          sessionStorage.setItem('googleUser', JSON.stringify(userData));
+          
+          // Update UI
+          if (typeof window.initializeUserData === 'function') {
+            window.initializeUserData();
+          }
+          
+          // Clean up dialog
+          backdrop.remove();
+          dialog.remove();
+          
+          // Redirect based on stored preference
+          const postAuthRedirect = localStorage.getItem('post_auth_redirect');
+          if (postAuthRedirect === 'client-mode') {
+            showClientMode();
+          } else {
+            showStartupMenu();
+          }
+          
+          localStorage.removeItem('post_auth_redirect');
+          showMessage('Successfully signed in with API key!');
+        } else {
+          showError('Please enter a valid OpenAI API key (should start with "sk-")');
+        }
+      };
+      
+      // Handle enter key
+      input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          document.getElementById('api-key-submit').click();
+        }
+      });
+    }
+
+    function handleGoogleSignIn() {
+      if (CONFIG.isDevelopment) {
+        console.log("Google Sign-In clicked");
+      }
+      
+      // Ensure Office.js is fully initialized before proceeding
+      if (typeof Office === 'undefined') {
+        console.error("Office.js is not loaded");
+        showError("Office Add-in environment not ready. Please refresh and try again.");
+        return;
+      }
+      
+      // Wait for Office to be ready if it's still initializing
+      Office.onReady(() => {
+        if (CONFIG.isDevelopment) {
+          console.log("Office.onReady called - proceeding with authentication");
+        }
+        proceedWithGoogleAuth();
+      });
+    }
+    
+    function proceedWithGoogleAuth() {
+      // Debug Office context - only in development
+      if (CONFIG.isDevelopment) {
+        console.log("=== Office Environment Debug ===");
+        console.log("Office available:", typeof Office !== 'undefined');
+        console.log("Office.context available:", typeof Office !== 'undefined' && Office.context);
+        console.log("Office.context.ui available:", typeof Office !== 'undefined' && Office.context && Office.context.ui);
+        console.log("Office.context.ui.displayDialogAsync available:", typeof Office !== 'undefined' && Office.context && Office.context.ui && typeof Office.context.ui.displayDialogAsync === 'function');
+        console.log("Office host:", Office.context?.host);
+        console.log("Office platform:", Office.context?.platform);
+        console.log("================================");
+      }
+      
+      // Use Office Dialog API for authentication within Excel environment
+      if (typeof Office !== 'undefined' && Office.context && Office.context.ui && typeof Office.context.ui.displayDialogAsync === 'function') {
+        if (CONFIG.isDevelopment) {
+          console.log("✅ Using Office Dialog API for authentication");
+        }
+        const authUrl = buildGoogleAuthUrl();
+        if (CONFIG.isDevelopment) {
+          console.log("Auth URL:", authUrl);
+        }
+         
+         // Show loading message
+         showMessage("Opening authentication dialog...");
+        
+        Office.context.ui.displayDialogAsync(authUrl, {
+           height: 70,
+           width: 70,
+           requireHTTPS: true,
+           displayInIframe: false // Ensure it opens in a proper dialog, not iframe
+        }, function (result) {
+          if (CONFIG.isDevelopment) {
+            console.log("Dialog creation result:", result);
+          }
+          if (result.status === Office.AsyncResultStatus.Succeeded) {
+            const dialog = result.value;
+            
+            // Listen for messages from the dialog (with error handling to prevent debug popup)
+            try {
+              dialog.addEventHandler(Office.EventType.DialogMessageReceived, function (arg) {
+                try {
+                  const authResult = JSON.parse(arg.message);
+                  dialog.close();
+                  
+                  if (authResult.success) {
+                    handleGoogleAuthSuccess(authResult);
+                  } else {
+                    handleGoogleAuthError(authResult.error);
+                  }
+                } catch (error) {
+                  console.error("Error parsing auth result:", error);
+                  dialog.close();
+                  showError("Authentication failed. Please try again.");
+                }
+              });
+              
+              // Handle dialog closed by user (with error handling to prevent debug popup)
+              dialog.addEventHandler(Office.EventType.DialogEventReceived, function (arg) {
+                if (arg.error === 12006) { // Dialog closed by user
+                  console.log("Authentication canceled by user");
+                } else {
+                  console.error("Dialog error:", arg.error);
+                  showError("Authentication failed. Please try again.");
+                }
+              });
+            } catch (eventHandlerError) {
+              console.warn("Could not register dialog event handlers:", eventHandlerError);
+            }
+          } else {
+            console.error("Failed to open authentication dialog:", result.error);
+            if (CONFIG.isDevelopment) {
+              console.error("Result details:", result);
+            }
+            // Fallback to external window for development
+            handleGoogleSignInFallback();
+          }
+        });
+      } else {
+        console.log("Office Dialog API not available, using fallback");
+        handleGoogleSignInFallback();
+      }
+    }
+
+    function buildGoogleAuthUrl() {
+      // Use the current origin for better flexibility across environments
+      const params = new URLSearchParams({
+        client_id: GOOGLE_CONFIG.CLIENT_ID,
+        redirect_uri: `${window.location.origin}/auth/google/callback.html`,
+        response_type: 'token id_token',
+        scope: GOOGLE_CONFIG.SCOPES,
+        nonce: generateRandomState(),
+        state: generateRandomState(),
+        prompt: 'select_account' // Force account selection every time
+      });
+      
+      return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    }
+
+    function generateRandomState() {
+      return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    }
+
+    // Google OAuth Configuration
+    const GOOGLE_CONFIG = {
+      CLIENT_ID: "", // Authentication removed
+      SCOPES: "email profile"
+    };
+
+    function handleGoogleSignInFallback() {
+      // Fallback for development or when Office Dialog API is not available
+      const authUrl = buildGoogleAuthUrl();
+      const popup = window.open(authUrl, 'googleAuth', 'width=500,height=600,scrollbars=yes,resizable=yes');
+      
+      // Poll for popup closure (not ideal but works for development)
+      const pollTimer = setInterval(() => {
+        try {
+          if (popup.closed) {
+            clearInterval(pollTimer);
+            console.log("Authentication popup closed");
+            // You might want to check for stored tokens here
+          }
+        } catch (error) {
+          // Cross-origin error when popup is open
+        }
+      }, 1000);
+      
+      // Clean up after 5 minutes
+      setTimeout(() => {
+        clearInterval(pollTimer);
+        if (!popup.closed) {
+          popup.close();
+        }
+      }, 300000);
+    }
+
+         async function handleGoogleAuthSuccess(authResult) {
+       console.log("✅ Google authentication successful", authResult);
+       console.log("🔍 AuthResult contains:", {
+         hasUser: !!authResult.user,
+         hasAccessToken: !!authResult.access_token,
+         hasIdToken: !!authResult.id_token,
+         hasCredential: !!authResult.credential,
+         keys: Object.keys(authResult)
+       });
+       
+       // Clear force_logout flags on successful authentication
+       localStorage.removeItem('force_logout');
+       sessionStorage.removeItem('force_logout');
+       
+       // ACCESS CODE VALIDATION - Validate access code with user's email
+       const validatedCode = sessionStorage.getItem('validated_access_code');
+       if (validatedCode && authResult.user && authResult.user.email) {
+         console.log('🔐 Validating access code with user email:', authResult.user.email);
+         
+         try {
+           const response = await fetch(`${CONFIG.backend.baseUrl}/validate-access-code`, {
+             method: 'POST',
+             headers: {
+               'Content-Type': 'application/json',
+             },
+             body: JSON.stringify({ 
+               code: validatedCode,
+               email: authResult.user.email 
+             })
+           });
+           
+           const data = await response.json();
+           
+           if (!response.ok) {
+             // Access code validation failed
+             console.error('❌ Access code validation failed:', data.message);
+             
+             if (data.error === 'Code already redeemed') {
+               // Code has been claimed by a different email
+               console.log('🚫 Code already redeemed, showing error view');
+               
+               // Clear authentication data
+               localStorage.removeItem('google_access_token');
+               localStorage.removeItem('googleUser');
+               localStorage.removeItem('googleToken');
+               localStorage.removeItem('googleCredential');
+               sessionStorage.clear();
+               
+               // Show the error view with the specific message
+               showAccessCodeError(data.message || 'This access code has already been redeemed by a different email address.');
+               
+               return; // Exit early, don't proceed with authentication
+             }
+           } else {
+             console.log('✅ Access code validated successfully for user:', authResult.user.email);
+             if (data.status === 'new_user') {
+               console.log('🆕 Access code claimed by new user');
+             } else if (data.status === 'returning_user') {
+               console.log('👤 Access code verified for returning user');
+             }
+           }
+         } catch (error) {
+           console.error('Error validating access code with email:', error);
+           // Continue with authentication even if validation fails
+         }
+       }
+       // END ACCESS CODE VALIDATION
+      
+       try {
+         // Store Google user data locally (for display purposes)
+      // Store in both sessionStorage (current session) and localStorage (persistence)
+      if (authResult.user) {
+        sessionStorage.setItem('googleUser', JSON.stringify(authResult.user));
+        localStorage.setItem('googleUser', JSON.stringify(authResult.user));
+      }
+      if (authResult.access_token) {
+        sessionStorage.setItem('googleToken', authResult.access_token);
+        localStorage.setItem('google_access_token', authResult.access_token);
+      }
+      if (authResult.id_token) {
+        sessionStorage.setItem('googleCredential', authResult.id_token);
+        localStorage.setItem('googleCredential', authResult.id_token);
+      }
+      
+      const userName = authResult.user ? authResult.user.name : 'User';
+         showMessage(`Welcome ${userName}! Connecting to backend...`);
+         
+         // Authenticate with backend using Google ID token or credential
+         const tokenToSend = authResult.id_token || authResult.credential || authResult.access_token;
+         
+         if (tokenToSend) {
+           console.log("🔐 Authenticating with backend using:", 
+             authResult.id_token ? "ID Token" : 
+             authResult.credential ? "Credential" : 
+             "Access Token");
+           
+           try {
+             const backendAuthResult = await backendAPI.signInWithGoogle(tokenToSend);
+             console.log("✅ Backend authentication successful");
+             
+             // Initialize user data from backend
+             await initializeUserData();
+             
+             showMessage(`Welcome ${userName}! You're all set!`);
+           } catch (backendError) {
+             console.error("❌ Backend authentication error:", backendError);
+             
+             // Check if it's a 401 (user doesn't exist) - this should be handled by the new registerNewGoogleUser
+             if (backendError.message && backendError.message.includes('401')) {
+               console.log("🆕 User might be new, registration should have been attempted");
+             }
+             
+             showMessage(`Welcome ${userName}! (Backend auth failed: ${backendError.message})`);
+           }
+         } else {
+           console.warn("⚠️ No token received at all - cannot authenticate with backend");
+           console.log("AuthResult structure:", authResult);
+           showMessage(`Welcome ${userName}! (No auth token - limited features)`);
+         }
+         
+         // Check for post-auth redirect
+         const postAuthRedirect = localStorage.getItem('post_auth_redirect');
+         if (postAuthRedirect === 'client-mode') {
+           console.log('Post-auth redirect to client mode detected');
+           localStorage.removeItem('post_auth_redirect');
+           // Simply call showAuthenticatedInterface which handles the client mode display
+           showAuthenticatedInterface();
+         } else {
+           // Update interface to show authenticated state
+           showAuthenticatedInterface();
+         }
+         
+       } catch (error) {
+         console.error("❌ Backend authentication failed:", error);
+         
+         // Still show interface if Google auth worked, but warn about backend
+         const userName = authResult.user ? authResult.user.name : 'User';
+         showMessage(`Welcome ${userName}! (Limited features - backend unavailable)`);
+         showAuthenticatedInterface();
+         
+         // Show error notification
+         setTimeout(() => {
+           showError("Some features may be unavailable due to backend connection issues.");
+         }, 2000);
+       }
+    }
+
+    function handleGoogleAuthError(error) {
+      console.error("Google authentication error:", error);
+      showError("Authentication failed: " + (error.message || error));
+    }
+
+    function handleGoogleCallback(response) {
+      console.log("Google authentication successful", response);
+      
+      // Decode the JWT token to get user info
+      const userInfo = parseJwt(response.credential);
+      console.log("User info:", userInfo);
+      
+      // Store user session
+      sessionStorage.setItem('googleUser', JSON.stringify(userInfo));
+      sessionStorage.setItem('googleCredential', response.credential);
+      
+      // Show success message and update interface
+      showMessage(`Welcome ${userInfo.name}! Authentication successful.`);
+      
+      // Update interface to show authenticated state
+      showAuthenticatedInterface();
+    }
+
+    function handleGoogleTokenResponse(tokenResponse) {
+      console.log("Google token response:", tokenResponse);
+      
+      if (tokenResponse.access_token) {
+        // Fetch user info with the access token
+        fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: {
+            'Authorization': `Bearer ${tokenResponse.access_token}`
+          }
+        })
+        .then(response => response.json())
+        .then(userInfo => {
+          console.log("User info from token:", userInfo);
+          
+          // Store user session
+          sessionStorage.setItem('googleUser', JSON.stringify(userInfo));
+          sessionStorage.setItem('googleToken', tokenResponse.access_token);
+          
+          // Show success message and update interface
+          showMessage(`Welcome ${userInfo.name}! Authentication successful.`);
+          
+          // Update interface to show authenticated state
+          showAuthenticatedInterface();
+        })
+        .catch(error => {
+          console.error("Error fetching user info:", error);
+          showMessage("Authentication successful but failed to get user information.");
+          
+          // Still update interface since authentication was successful
+          showAuthenticatedInterface();
+        });
+      }
+    }
+
+    function parseJwt(token) {
+      try {
+        const base64Url = token.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+        }).join(''));
+        return JSON.parse(jsonPayload);
+      } catch (error) {
+        console.error("Error parsing JWT:", error);
+        return null;
+      }
+    }
+
+    // Removed local authentication functions - using global ones instead
+
+    // Function to get current user display name
+    function getCurrentUserDisplayName() {
+      const googleUser = getCurrentUser();
+      console.log('getCurrentUserDisplayName - googleUser:', googleUser);
+      console.log('getCurrentUserDisplayName - currentUser (Microsoft):', currentUser);
+      
+      if (googleUser) {
+        const displayName = googleUser.name || googleUser.email || 'Google User';
+        console.log('Using Google user display name:', displayName);
+        return displayName;
+      }
+      
+      // Check for Microsoft authentication
+      if (currentUser) {
+        const displayName = currentUser.name || currentUser.username || 'Microsoft User';
+        console.log('Using Microsoft user display name:', displayName);
+        return displayName;
+      }
+      
+      console.log('No authenticated user found');
+      return null;
+    }
+
+    // Function to update signed-in status display
+    function updateSignedInStatus() {
+      const signedInStatus = document.getElementById('signed-in-status');
+      const signedInUser = document.getElementById('signed-in-user');
+      
+      console.log('updateSignedInStatus called');
+      console.log('signedInStatus element:', signedInStatus);
+      console.log('signedInUser element:', signedInUser);
+      
+      if (signedInStatus && signedInUser) {
+        const userDisplayName = getCurrentUserDisplayName();
+        console.log('userDisplayName:', userDisplayName);
+        if (userDisplayName) {
+          signedInUser.textContent = userDisplayName;
+          signedInStatus.style.display = 'block';
+          console.log('Signed-in status shown for:', userDisplayName);
+          
+          // Update credits display in client mode
+          const clientCreditsElement = document.getElementById('credits-count-client');
+          if (clientCreditsElement && window.userProfileManager) {
+            const credits = window.userProfileManager.getCredits();
+            clientCreditsElement.textContent = credits.toFixed(1);
+            console.log('🔧 Updated client mode credits display:', credits);
+          }
+          
+          // Check subscription status
+          checkSubscriptionStatus();
+        } else {
+          signedInStatus.style.display = 'none';
+          console.log('Signed-in status hidden - no user found');
+        }
+      } else {
+        console.log('Required elements not found for signed-in status');
+      }
+    }
+
+    // Subscription check removed - standalone mode
+    async function checkSubscriptionStatus() {
+      // No subscription checking in standalone mode
+      return;
+      }
+
+      try {
+        console.log('Checking subscription status for:', googleUser.email);
+        
+        // Use BackendAPI which has mock support built-in
+        const subscriptionData = await backendAPI.getSubscriptionStatus();
+          updateSubscriptionDisplay(subscriptionData);
+        
+      } catch (error) {
+        console.error('Error checking subscription status:', error);
+        // Use fallback data for development
+        updateSubscriptionDisplay({ 
+          status: 'none', 
+          plan: 'Free',
+          hasActiveSubscription: false,
+          credits: 15
+        });
+      }
+    }
+
+    // Function to update subscription status display
+    function updateSubscriptionDisplay(subscriptionData) {
+      const subscriptionStatusElement = document.getElementById('subscription-status');
+      if (!subscriptionStatusElement) return;
+
+      // Clear previous classes
+      subscriptionStatusElement.className = 'subscription-status-text';
+      
+      if (subscriptionData.status === 'active' && subscriptionData.plan) {
+        subscriptionStatusElement.textContent = `${subscriptionData.plan} Plan`;
+        subscriptionStatusElement.classList.add('active');
+        subscriptionStatusElement.style.display = 'block';
+      } else if (subscriptionData.status === 'inactive' || subscriptionData.status === 'cancelled') {
+        subscriptionStatusElement.textContent = 'No Active Subscription';
+        subscriptionStatusElement.classList.add('inactive');
+        subscriptionStatusElement.style.display = 'block';
+      } else if (subscriptionData.status === 'error') {
+        subscriptionStatusElement.textContent = 'Subscription status unavailable';
+        subscriptionStatusElement.classList.add('error');
+        subscriptionStatusElement.style.display = 'block';
+      } else {
+        // Unknown status, hidden, or no subscription info
+        subscriptionStatusElement.style.display = 'none';
+      }
+      
+      console.log('Subscription status updated:', subscriptionData);
+    }
+
+    // Make functions globally accessible for cross-file access
+    window.updateSignedInStatus = updateSignedInStatus;
+    window.getCurrentUserDisplayName = getCurrentUserDisplayName;
+
+    // Function to sign out user
+    function signOutUser() {
+      // Clear all authentication tokens and session data
+      sessionStorage.removeItem('googleUser');
+      sessionStorage.removeItem('googleCredential');
+      sessionStorage.removeItem('googleToken');
+      localStorage.removeItem('google_access_token');
+      localStorage.removeItem('backend_access_token');
+      localStorage.removeItem('backend_refresh_token');
+      
+      // Clear user profile data if exists
+      if (window.userProfileManager) {
+        window.userProfileManager.userData = null;
+        window.userProfileManager.subscriptionData = null;
+      }
+      
+      // Revoke Google token if available
+      if (typeof google !== 'undefined' && google.accounts) {
+        google.accounts.id.disableAutoSelect();
+      }
+      
+      console.log("User signed out");
+      
+      // Hide all views
+      if (appBody) appBody.style.display = 'none';
+      if (clientModeView) clientModeView.style.display = 'none';
+      
+      // Hide subscription welcome view
+      const subscriptionView = document.getElementById('subscription-welcome-view');
+      if (subscriptionView) subscriptionView.style.display = 'none';
+      
+      // Show authentication view
+      if (authenticationView) {
+        authenticationView.style.display = 'flex';
+        // Re-initialize authentication handlers
+        setupGoogleSignInButton();
+        console.log("Redirected to authentication view after sign out");
+      }
+      
+      // Update any UI elements that depend on auth state
+      updateSignedInStatus();
+    }
+
+    // Function to update UI based on authentication state
+    function updateAuthUI() {
+      const isAuthenticated = isUserAuthenticated();
+      const user = getCurrentUser();
+      
+      if (isAuthenticated && user) {
+        console.log(`User is authenticated: ${user.name} (${user.email})`);
+        // Could update UI to show user info, add sign-out button, etc.
+      } else {
+        console.log("User is not authenticated");
+      }
+    }
+
+    // Startup menu buttons removed - no longer needed since we skip startup menu
+
+
+
+    // Assign the REVISED async function as the handler
+    const button = document.getElementById("insert-and-run");
+    if (button) {
+        button.onclick = async () => {
+          // Check credits before allowing model building
+          await enforceFeatureAccess('build', async () => {
+            // Use credit for building
+            await useCreditForBuild();
+            // Proceed with model building
+            await insertSheetsAndRunCodes();
+          });
+        };
+    } else {
+        console.error("Could not find button with id='insert-and-run'");
+    }
+
+    // ... (rest of your Office.onReady remains the same) ...
+
+    // Keep the setup for your other buttons (send-button, reset-button, etc.)
+    const sendButton = document.getElementById('send');
+    if (sendButton) {
+      sendButton.onclick = async () => {
+        // Check credits before allowing AI conversation
+        await enforceFeatureAccess('update', async () => {
+          // Use credit for update/conversation
+          await useCreditForUpdate();
+          // Proceed with AI conversation
+          await handleSend();
+        });
+      };
+    }
+
+    const writeButton = document.getElementById('write-to-excel');
+    if (writeButton) writeButton.onclick = writeToExcel;
+
+    const resetButton = document.getElementById('reset-chat');
+    if (resetButton) resetButton.onclick = resetChat;
+
+    // Add to Training Data Queue button
+    const addToTrainingQueueButton = document.getElementById('add-to-training-queue');
+    if (addToTrainingQueueButton) {
+        addToTrainingQueueButton.onclick = addToTrainingDataQueue;
+    } else {
+        console.error("Could not find button with id='add-to-training-queue'");
+    }
+
+    // Training Data Modal buttons
+    const trainingDataModal = document.getElementById('training-data-modal');
+    const saveTrainingDataButton = document.getElementById('save-training-data-button');
+    const cancelTrainingDataButton = document.getElementById('cancel-training-data-button');
+    
+    if (saveTrainingDataButton) {
+        saveTrainingDataButton.onclick = saveTrainingDataFromModal;
+    } else {
+        console.error("Could not find button with id='save-training-data-button'");
+    }
+    
+    if (cancelTrainingDataButton) {
+        cancelTrainingDataButton.onclick = hideTrainingDataModal;
+    } else {
+        console.error("Could not find button with id='cancel-training-data-button'");
+    }
+    
+    // Training Data Modal close button
+    if (trainingDataModal) {
+        const trainingDataCloseButton = trainingDataModal.querySelector('.close-button');
+        if (trainingDataCloseButton) {
+            trainingDataCloseButton.onclick = hideTrainingDataModal;
+        }
+    }
+
+    // Training Data Modal find/replace buttons
+    const trainingReplaceAllButton = document.getElementById('training-replace-all-button');
+    if (trainingReplaceAllButton) {
+        trainingReplaceAllButton.onclick = trainingModalReplaceAll;
+    } else {
+        console.error("Could not find button with id='training-replace-all-button'");
+    }
+
+    // >>> ADDED: Auto-resize textarea functionality - DISABLED for single-line input
+    // const userInputClient = document.getElementById('user-input-client');
+    // if (userInputClient) {
+    //     // Function to auto-resize textarea
+    //     function autoResizeTextarea() {
+    //         // Reset height to auto to get the correct scrollHeight
+    //         userInputClient.style.height = 'auto';
+    //         
+    //         // Calculate new height
+    //         const newHeight = Math.min(userInputClient.scrollHeight, 72); // Max 3 lines (~72px)
+    //         userInputClient.style.height = newHeight + 'px';
+    //     }
+    //     
+    //     // Add event listeners for auto-resize
+    //     userInputClient.addEventListener('input', autoResizeTextarea);
+    //     userInputClient.addEventListener('change', autoResizeTextarea);
+    //     
+    //     // Initial call to set correct height
+    //     autoResizeTextarea();
+    // }
+
+    // >>> ADDED: Setup for Client Mode Chat Buttons
+    // Set up credit enforcement wrapper that will work regardless of when AIcalls.js loads
+    const sendClientButton = document.getElementById('send-client');
+    if (sendClientButton) {
+      // Store reference to plannerHandleSend for credit wrapper
+      const wrappedSendHandler = async () => {
+        // Check credits before allowing AI conversation
+        await enforceFeatureAccess('update', async () => {
+          // Use credit for update/conversation
+          await useCreditForUpdate();
+          // Call plannerHandleSend directly
+          if (typeof plannerHandleSend === 'function') {
+            await plannerHandleSend();
+          } else {
+            console.error('plannerHandleSend function not found');
+          }
+        });
+      };
+      sendClientButton.onclick = wrappedSendHandler;
+    }
+
+    // >>> ADDED: Enter key handler for client input
+    const userInputClient = document.getElementById('user-input-client');
+    if (userInputClient) {
+      userInputClient.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault(); // Prevent line break
+          const sendButton = document.getElementById('send-client');
+          if (sendButton && !sendButton.disabled) {
+            sendButton.click(); // Trigger send
+          }
+        }
+      });
+    }
+    
+    // >>> ADDED: Voice Recording Setup for Client Mode
+    initializeVoiceRecordingClient();
+
+    // Add click handler for EBITDAI header to open website
+    const headerTitleLink = document.getElementById('header-title-link');
+    if (headerTitleLink) {
+        headerTitleLink.onclick = () => {
+            window.open('https://ebitdai.co', '_blank');
+        };
+    }
+
+    const resetChatClientButton = document.getElementById('reset-chat-client');
+    if (resetChatClientButton) resetChatClientButton.onclick = resetChatClient;
+
+    // Setup subscription upgrade buttons
+    const upgradeButtons = document.querySelectorAll('.upgrade-button');
+    upgradeButtons.forEach(button => {
+      button.onclick = async () => {
+        console.log("💰 Upgrade button clicked");
+        await startSubscription();
+      };
+    });
+
+
+
+    const writeToExcelClientButton = document.getElementById('write-to-excel-client');
+    if (writeToExcelClientButton) {
+        // writeToExcelClientButton.onclick = () => alert('Client Mode "Write to Excel" is not yet implemented.');
+    }
+    const insertToEditorClientButton = document.getElementById('insert-to-editor-client');
+    if (insertToEditorClientButton) {
+        // insertToEditorClientButton.onclick = () => alert('Client Mode "Insert to Editor" is not yet implemented.');
+    }
+    // <<< END ADDED
+
+    // >>> ADDED: Setup for Generate Tab String button
+    const generateTabStringButton = document.getElementById('generate-tab-string-button');
+    if (generateTabStringButton) {
+        generateTabStringButton.onclick = generateTabString; // Assign the imported function
+    } else {
+        console.error("Could not find button with id='generate-tab-string-button'");
+    }
+    // <<< END ADDED CODE
+
+    // >>> ADDED: AI Editor functionality
+    const aiEditorButton = document.getElementById('ai-editor-button');
+    const aiEditorModal = document.getElementById('ai-editor-modal');
+    const aiEditorInstructions = document.getElementById('ai-editor-instructions');
+    const aiEditorExecuteButton = document.getElementById('ai-editor-execute-button');
+    const aiEditorCancelButton = document.getElementById('ai-editor-cancel-button');
+    const aiEditorBackupOption = document.getElementById('ai-editor-backup-option');
+    const restoreBackupButton = document.getElementById('restore-backup-button');
+
+    if (aiEditorButton && aiEditorModal) {
+        aiEditorButton.onclick = () => {
+            const currentContent = codesTextarea.value;
+            if (!currentContent.trim()) {
+                showError('Code editor is empty. Please add some content before using AI Editor.');
+                return;
+            }
+            aiEditorInstructions.value = '';
+            aiEditorInstructions.focus();
+            aiEditorModal.style.display = 'block';
+        };
+
+        aiEditorCancelButton.onclick = () => {
+            aiEditorModal.style.display = 'none';
+        };
+
+        aiEditorExecuteButton.onclick = async () => {
+            await executeAIEditor();
+        };
+
+        // Close modal when clicking outside or on X
+        const aiEditorCloseButton = aiEditorModal.querySelector('.close-button');
+        aiEditorCloseButton.onclick = () => {
+            aiEditorModal.style.display = 'none';
+        };
+
+        window.addEventListener('click', (event) => {
+            if (event.target === aiEditorModal) {
+                aiEditorModal.style.display = 'none';
+            }
+        });
+    } else {
+        console.error("Could not find AI Editor button or modal elements");
+    }
+
+    // Restore backup functionality
+    if (restoreBackupButton) {
+        restoreBackupButton.onclick = () => {
+            restoreFromBackup();
+        };
+    }
+    // <<< END ADDED CODE
+
+    const codesTextarea = document.getElementById('codes-textarea');
+    const editParamsButton = document.getElementById('edit-code-params-button');
+    const paramsModal = document.getElementById('code-params-modal');
+    const paramsModalForm = document.getElementById('code-params-modal-form');
+    const closeModalButton = paramsModal.querySelector('.close-button');
+    const applyParamsButton = document.getElementById('apply-code-params-button');
+    const cancelParamsButton = document.getElementById('cancel-code-params-button');
+
+    // Modal Find/Replace elements
+    const modalFindInput = document.getElementById('modal-find-input');
+    const modalReplaceInput = document.getElementById('modal-replace-input');
+    const modalReplaceAllButton = document.getElementById('modal-replace-all-button');
+    const modalSearchStatus = document.getElementById('modal-search-status');
+
+    let currentCodeStringRange = null; // To store {start, end} of the code string being edited
+    let currentCodeStringType = ''; // To store the type like 'VOL-EV'
+
+    // State for modal find/replace (Simplified)
+    let modalSearchableElements = []; // Stores {element, originalValue}
+    // Removed modalSearchTerm, modalCurrentMatchIndex, modalAllMatches
+
+    // Function to reset modal search state (Simplified)
+    const resetModalSearchState = () => {
+        modalSearchableElements = Array.from(paramsModalForm.querySelectorAll('input[data-param-key], textarea[data-param-key]'));
+        if (modalSearchStatus) modalSearchStatus.textContent = '';
+        // Clear input fields as well?
+        // if (modalFindInput) modalFindInput.value = '';
+        // if (modalReplaceInput) modalReplaceInput.value = '';
+        console.log("Modal search state reset.");
+    };
+
+    // Function to update modal search status
+    const updateModalSearchStatus = (message) => {
+        if (modalSearchStatus) {
+            modalSearchStatus.textContent = message;
+        }
+    };
+
+
+
+    // Removed findAllMatchesInModal function
+
+    // Function to show the modal
+    const showParamsModal = () => {
+        if (paramsModal) {
+            paramsModal.style.display = 'block';
+            resetModalSearchState(); // Reset search when modal opens
+        }
+    };
+
+    // Function to hide the modal
+    const hideParamsModal = () => {
+        if (paramsModal) {
+            paramsModal.style.display = 'none';
+            paramsModalForm.innerHTML = ''; // Clear the form
+            currentCodeStringRange = null; // Reset state
+            currentCodeStringType = '';
+            resetModalSearchState(); // Also reset search state on close
+        }
+    };
+
+    // Function to find the <...> block around the cursor
+    const findCodeStringAroundCursor = (text, cursorPos) => {
+        const textBeforeCursor = text.substring(0, cursorPos);
+        const textAfterCursor = text.substring(cursorPos);
+
+        const lastOpenBracket = textBeforeCursor.lastIndexOf('<');
+        const lastCloseBracketBefore = textBeforeCursor.lastIndexOf('>');
+
+        // Check if cursor is potentially inside brackets
+        if (lastOpenBracket > lastCloseBracketBefore) {
+            const firstCloseBracketAfter = textAfterCursor.indexOf('>');
+            if (firstCloseBracketAfter !== -1) {
+                const start = lastOpenBracket;
+                const end = cursorPos + firstCloseBracketAfter + 1; // +1 to include '>'
+                const codeString = text.substring(start, end);
+                console.log(`Found code string: ${codeString} at range [${start}, ${end})`);
+                return { codeString, start, end };
+            }
+        }
+        console.log("Cursor not inside a <...> block.");
+        return null; // Cursor is not inside a valid <...> block
+    };
+
+    // Function to parse parameters from the code string content (inside <...>)
+    const parseCodeParameters = (content) => {
+        const parts = content.split(';');
+        if (parts.length < 1) return { type: '', params: {} };
+
+        const type = parts[0].trim();
+        const params = {};
+        // Regex to match key="value" or key=value (no quotes)
+        const paramRegex = /\s*([^=\s]+)\s*=\s*(?:"([^"]*)"|([^;]*))/g;
+
+        for (let i = 1; i < parts.length; i++) {
+            const part = parts[i].trim();
+            if (!part) continue;
+
+            // Reset regex index before each exec
+            paramRegex.lastIndex = 0;
+            const match = paramRegex.exec(part);
+
+            if (match) {
+                const key = match[1];
+                // Value could be in group 2 (quoted) or group 3 (unquoted)
+                const value = match[2] !== undefined ? match[2] : match[3];
+                 if (key) { // Ensure key is valid
+                    params[key] = value.trim();
+                }
+            } else {
+                console.warn(`Could not parse parameter part: '${part}'`);
+            }
+        }
+        console.log(`Parsed type: ${type}, params:`, params);
+        return { type, params };
+    };
+
+    // Function to populate the modal form (needs to update searchable elements)
+    const populateParamsModal = (type, params) => {
+        paramsModalForm.innerHTML = ''; // Clear previous form items
+        currentCodeStringType = type; // Store the type
+
+        Object.entries(params).forEach(([key, value]) => {
+            const paramEntryDiv = document.createElement('div');
+            paramEntryDiv.className = 'param-entry';
+
+            const label = document.createElement('label');
+            label.htmlFor = `param-${key}`;
+            label.textContent = key;
+
+            let inputElement;
+            const isLongValue = key.toLowerCase().includes('row') || value.length > 60;
+            const isLIParam = /LI\d+\|/.test(value.trim()); // Check if value starts with LI<digit>|
+
+            if (isLongValue || isLIParam) { // Use textarea for LI params too, for consistency
+                inputElement = document.createElement('textarea');
+                inputElement.rows = isLIParam ? 2 : 3; // Slightly smaller for LI rows initially
+            } else {
+                inputElement = document.createElement('input');
+                inputElement.type = 'text';
+            }
+
+            inputElement.id = `param-${key}`;
+            inputElement.value = value;
+            inputElement.dataset.paramKey = key;
+            if (isLIParam) {
+                inputElement.dataset.isOriginalLi = "true"; // Mark original LI fields
+            }
+
+            paramEntryDiv.appendChild(label);
+
+            if (isLIParam) {
+                // Create a container for the LI field and its add button
+                const liContainer = document.createElement('div');
+                liContainer.className = 'li-parameter-container';
+                liContainer.dataset.originalLiKey = key; // Link container to original key
+
+                liContainer.appendChild(inputElement); // Add the input field first
+
+                // Create the Add button
+                const addButton = document.createElement('button');
+                addButton.type = 'button'; // Important: prevent form submission
+                addButton.textContent = '+';
+                addButton.className = 'ms-Button ms-Button--icon add-li-button'; // Add specific class
+                addButton.title = 'Add another LI item based on this one';
+                addButton.dataset.targetLiKey = key; // Link button to the input's key
+
+                addButton.onclick = (event) => {
+                    const sourceInput = document.getElementById(`param-${key}`);
+                    if (!sourceInput) return;
+
+                    const newValueContainer = document.createElement('div');
+                    newValueContainer.className = 'added-li-item';
+
+                    const newInput = sourceInput.cloneNode(true); // Clone the original input/textarea
+                    // Clear ID, mark as added, remove original marker
+                    newInput.id = '';
+                    newInput.dataset.isAddedLi = "true";
+                    delete newInput.dataset.isOriginalLi;
+                    newInput.dataset.originalLiKey = key; // Link back to the original key
+                    // Keep the same value as the original initially
+                    newInput.value = sourceInput.value; // Duplicate the content
+
+                    // Add a remove button for the added item
+                    const removeButton = document.createElement('button');
+                    removeButton.type = 'button';
+                    removeButton.textContent = '-';
+                    removeButton.className = 'ms-Button ms-Button--icon remove-li-button';
+                    removeButton.title = 'Remove this added LI item';
+                    removeButton.onclick = () => {
+                        newValueContainer.remove();
+                    };
+
+                    newValueContainer.appendChild(newInput);
+                    newValueContainer.appendChild(removeButton);
+
+                    // Insert the new container after the clicked button
+                    // or after the last added item within this container
+                    event.target.parentNode.appendChild(newValueContainer);
+                     // Maybe scroll container? paramsModalForm.scrollTop = paramsModalForm.scrollHeight;
+                };
+
+                liContainer.appendChild(addButton); // Add button after input
+                paramEntryDiv.appendChild(liContainer); // Add container to entry div
+
+            } else {
+                 paramEntryDiv.appendChild(inputElement); // Non-LI params added directly
+            }
+
+            paramsModalForm.appendChild(paramEntryDiv);
+        });
+        // IMPORTANT: Update searchable elements after populating
+        resetModalSearchState(); // Reset search state after populating form
+    };
+
+    // --- Event Listener for the Edit Parameters Button ---
+    if (editParamsButton && codesTextarea && paramsModal) {
+        editParamsButton.onclick = () => {
+            const text = codesTextarea.value;
+            const cursorPos = codesTextarea.selectionStart;
+
+            const codeInfo = findCodeStringAroundCursor(text, cursorPos);
+
+            if (codeInfo) {
+                // Extract content within < >
+                const content = codeInfo.codeString.substring(1, codeInfo.codeString.length - 1);
+                const { type, params } = parseCodeParameters(content);
+
+                if (type) {
+                    currentCodeStringRange = { start: codeInfo.start, end: codeInfo.end };
+                    populateParamsModal(type, params);
+                    showParamsModal();
+                } else {
+                    showError("Could not parse the code string structure.");
+                }
+            } else {
+                showError("Place cursor inside a <...> code block to edit parameters.");
+            }
+        };
+    }
+
+    // --- Event Listeners for Modal Actions ---
+    if (closeModalButton) {
+        closeModalButton.onclick = hideParamsModal;
+    }
+    if (cancelParamsButton) {
+        cancelParamsButton.onclick = hideParamsModal;
+    }
+
+    // --- APPLY CHANGES LOGIC (MODIFIED) ---
+    if (applyParamsButton && codesTextarea) {
+        applyParamsButton.onclick = () => {
+            if (!currentCodeStringRange || !currentCodeStringType) return; // Safety check
+
+            // Use a map to reconstruct parameters, handling LI aggregation
+            const paramValues = {};
+
+            // Process all input/textarea fields in the form
+            const formElements = paramsModalForm.querySelectorAll('input[data-param-key], textarea[data-param-key]');
+
+            formElements.forEach(input => {
+                const key = input.dataset.paramKey;
+                const isOriginalLI = input.dataset.isOriginalLi === "true";
+                const isAddedLI = input.dataset.isAddedLi === "true";
+                const value = input.value;
+
+                if (isOriginalLI) {
+                    // If it's an original LI, initialize its value in the map
+                    if (!paramValues[key]) {
+                        paramValues[key] = value; // Start with the original value
+                    }
+                } else if (isAddedLI) {
+                    // This case handled below by finding related elements
+                    // We only need to store original keys first
+                } else if (key && !isAddedLI) {
+                    // Standard parameter, just store its value
+                     if (!paramValues[key]) { // Check prevents overwriting if key appears twice (shouldn't happen)
+                       paramValues[key] = value;
+                    }
+                }
+            });
+
+            // Now, aggregate added LI items
+            const addedLiElements = paramsModalForm.querySelectorAll('textarea[data-is-added-li="true"]');
+            addedLiElements.forEach(addedInput => {
+                 const originalKey = addedInput.dataset.originalLiKey;
+                 if (originalKey && paramValues[originalKey]) {
+                      // Append the added value, prefixed with *
+                      paramValues[originalKey] += ` *${addedInput.value}`;
+                 }
+            });
+
+            // Build the final parameter string parts
+            const updatedParams = Object.entries(paramValues).map(([key, finalValue]) => {
+                 // Re-add quotes around the final aggregated value
+                 return `${key}="${finalValue}"`;
+            });
+
+            // Reconstruct the code string
+            const newCodeStringContent = `${currentCodeStringType}; ${updatedParams.join('; ')}`;
+            const newCodeString = `<${newCodeStringContent}>`;
+
+            // Update the textarea content
+            const currentText = codesTextarea.value;
+            const textBefore = currentText.substring(0, currentCodeStringRange.start);
+            const textAfter = currentText.substring(currentCodeStringRange.end);
+
+            codesTextarea.value = textBefore + newCodeString + textAfter;
+
+            console.log(`Updated code string at [${currentCodeStringRange.start}, ${currentCodeStringRange.start + newCodeString.length})`);
+            console.log("New string:", newCodeString);
+
+            // Optionally, update cursor position
+            const newCursorPos = currentCodeStringRange.start + newCodeString.length;
+            codesTextarea.focus();
+            codesTextarea.setSelectionRange(newCursorPos, newCursorPos);
+
+            hideParamsModal(); // Close modal after applying
+        };
+    }
+
+    // --- Modal Find/Replace Logic (Simplified) ---
+
+    const modalReplaceAll = () => {
+        const searchTerm = modalFindInput.value;
+        const replaceTerm = modalReplaceInput.value;
+        if (!searchTerm) {
+            updateModalSearchStatus("Enter search term.");
+            return;
+        }
+
+        // Ensure searchable elements are up-to-date
+        modalSearchableElements = Array.from(paramsModalForm.querySelectorAll('input[data-param-key], textarea[data-param-key]'));
+
+        let replacementsMade = 0;
+        modalSearchableElements.forEach((element, index) => {
+            let currentValue = element.value;
+            // Escape regex special characters in search term
+            const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            let newValue = currentValue.replace(new RegExp(escapedSearchTerm, 'g'), () => {
+                replacementsMade++;
+                return replaceTerm;
+            });
+            if (currentValue !== newValue) {
+                element.value = newValue;
+                console.log(`Modal Replace All: Made replacements in element ${index}`);
+            }
+        });
+
+        if (replacementsMade > 0) {
+            updateModalSearchStatus(`Replaced ${replacementsMade} occurrence(s).`);
+            // No need to reset search state as there's no find next
+        } else {
+            updateModalSearchStatus(`"${searchTerm}" not found.`);
+        }
+    };
+
+    // Add event listeners for modal find/replace buttons (Simplified)
+    // Removed listeners for Find Next and Replace
+    if (modalReplaceAllButton) modalReplaceAllButton.onclick = modalReplaceAll;
+    // Removed input listener for modalFindInput
+
+    // --- Event Listeners for Modal Actions ---
+    if (closeModalButton) {
+        closeModalButton.onclick = hideParamsModal;
+    }
+
+    // ... (rest of your Office.onReady, including suggestion logic, initializations)
+
+    // Update the welcome title and steps based on the selected mode
+    function updateWelcomeByMode(modeValue) {
+        try {
+            const titleEl = document.querySelector('.welcome-section .welcome-title');
+            const stepTextEls = document.querySelectorAll('.welcome-section .welcome-steps .step-text');
+
+            if (!titleEl || stepTextEls.length < 2) {
+                return; // Welcome screen not visible in current context
+            }
+
+            if (modeValue === 'one-shot') {
+                titleEl.textContent = 'One-Shot Mode';
+                stepTextEls[0].textContent = "Provide your key business assumptions, including revenue, pricing, expenses, financing, and other critical details.";
+                stepTextEls[1].textContent = "Your model will be generated instantly based on the information you provide.";
+            } else if (modeValue === 'limited-guidance') {
+                titleEl.textContent = 'Limited-Guidance Mode';
+                stepTextEls[0].textContent = "Share your business assumptions covering revenue, pricing, expenses, financing, and other essential inputs.";
+                stepTextEls[1].textContent = "We will ask one to two clarifying questions before delivering your completed model.";
+            } else if (modeValue === 'full-guidance') {
+                titleEl.textContent = 'Full-Guidance Mode';
+                stepTextEls[0].textContent = 'Start with a concise overview of your business.';
+                stepTextEls[1].textContent = "We will work with you step-by-step to define every aspect of your model.";
+            }
+        } catch (err) {
+            console.warn('updateWelcomeByMode failed:', err);
+        }
+    }
+
+    // Initialize system prompt dropdown functionality
+    function initializeSystemPromptDropdown() {
+        // Handle both the old dropdown and the new header dropdown
+        const oldDropdown = document.getElementById('system-prompt-dropdown');
+        const newDropdown = document.getElementById('mode-dropdown');
+        
+        const handleDropdownChange = function() {
+                console.log(`System prompt mode changed to: ${this.value}`);
+            // Sync both dropdowns if they exist
+            if (oldDropdown && this === newDropdown) oldDropdown.value = this.value;
+            if (newDropdown && this === oldDropdown) newDropdown.value = this.value;
+                // Optionally reset conversation when mode changes
+                // resetChatClient();
+
+            // Update welcome screen content according to selected mode
+            const currentMode = this.value;
+            updateWelcomeByMode(currentMode);
+        };
+        
+        if (oldDropdown) {
+            oldDropdown.addEventListener('change', handleDropdownChange);
+        }
+        if (newDropdown) {
+            newDropdown.addEventListener('change', handleDropdownChange);
+            // Initialize the welcome screen once with current value
+            updateWelcomeByMode(newDropdown.value);
+        }
+    }
+
+    // Initialize model dropdown tooltips for both client and dev mode
+    function initializeModelDropdownTooltips() {
+        // Handle both client mode and dev mode dropdowns
+        const clientDropdown = document.getElementById('model-dropdown');
+        const devDropdown = document.getElementById('dev-model-dropdown');
+        
+        // Initialize client mode dropdown
+        if (clientDropdown) {
+            const clientTooltips = clientDropdown.closest('.model-dropdown-wrapper')?.querySelectorAll('.model-tooltip');
+            if (clientTooltips?.length) {
+                const updateClientTooltips = () => {
+                    const selectedValue = clientDropdown.value;
+                    clientTooltips.forEach(tooltip => {
+                        if (tooltip.dataset.model === selectedValue) {
+                            tooltip.classList.add('active');
+                        } else {
+                            tooltip.classList.remove('active');
+                        }
+                    });
+                };
+                
+                updateClientTooltips();
+                clientDropdown.addEventListener('change', updateClientTooltips);
+            }
+        }
+        
+        // Initialize dev mode dropdown
+        if (devDropdown) {
+            const devTooltips = devDropdown.closest('.model-dropdown-wrapper')?.querySelectorAll('.model-tooltip');
+            if (devTooltips?.length) {
+                const updateDevTooltips = () => {
+                    const selectedValue = devDropdown.value;
+                    devTooltips.forEach(tooltip => {
+                        if (tooltip.dataset.model === selectedValue) {
+                            tooltip.classList.add('active');
+                        } else {
+                            tooltip.classList.remove('active');
+                        }
+                    });
+                };
+                
+                updateDevTooltips();
+                devDropdown.addEventListener('change', updateDevTooltips);
+            }
+        }
+        
+        // Sync dropdowns when one changes
+        if (clientDropdown && devDropdown) {
+            clientDropdown.addEventListener('change', () => {
+                devDropdown.value = clientDropdown.value;
+                devDropdown.dispatchEvent(new Event('change'));
+            });
+            
+            devDropdown.addEventListener('change', () => {
+                clientDropdown.value = devDropdown.value;
+                clientDropdown.dispatchEvent(new Event('change'));
+            });
+        }
+    }
+
+    // Duplicate function removed - using global function instead
+
+    // Developer mode initialization moved to client view display section
+
+    // Make sure initialization runs after setting up modal logic
+    Promise.all([
+        (async () => {
+            const { initializeAPIKeys } = await import('./AIcalls.js');
+            return await initializeAPIKeys();
+        })(),
+        loadCodeDatabase()
+    ]).then(([keys]) => {
+      if (!keys) {
+        showError("Failed to load API keys. Please check configuration.");
+      } else {
+        // >>> ADDED: Set the API keys in AIcalls module
+        setAPIKeys(keys);
+        
+        // >>> ADDED: Set the API key for AI Model Planner voice input
+        if (keys.OPENAI_API_KEY) {
+          setAIModelPlannerOpenApiKey(keys.OPENAI_API_KEY);
+        }
+      }
+      
+      // >>> ADDED: Initialize system prompt dropdown
+      initializeSystemPromptDropdown();
+      
+      // Initialize model dropdown tooltips
+      initializeModelDropdownTooltips();
+      
+      // >>> ADDED: Initialize training data voice recording
+      initializeTrainingVoiceRecording();
+      
+      // >>> ADDED: Initialize AI Editor voice recording
+      initializeAIEditorVoiceRecording();
+      
+      // >>> ADDED: Clear conversation history on startup to ensure fresh start
+      console.log("Clearing conversation history on startup...");
+      conversationHistory = [];
+      saveConversationHistory(conversationHistory);
+      lastResponse = null;
+      isFirstMessageInSession = true;
+      firstUserInput = null;
+      lastUserInput = null;
+      persistedTrainingUserInput = null;
+      persistedTrainingAiResponse = null;
+      console.log("Conversation history cleared on startup");
+      // <<< END ADDED
+
+      try {
+          const storedCodes = localStorage.getItem('userCodeStrings');
+          if (storedCodes !== null) {
+              loadedCodeStrings = storedCodes;
+              if (codesTextarea) {
+                  codesTextarea.value = loadedCodeStrings;
+                  // Trigger input event to ensure autopopulate initializes properly
+                  const inputEvent = new Event('input', { bubbles: true, cancelable: true });
+                  codesTextarea.dispatchEvent(inputEvent);
+              }
+              console.log("Code strings loaded from localStorage into global variable.");
+          } else {
+              console.log("No code strings found in localStorage, initializing global variable as empty.");
+              loadedCodeStrings = "";
+          }
+
+
+      } catch (error) {
+          console.error("Error loading code strings from localStorage:", error);
+          showError(`Error loading codes from storage: ${error.message}`);
+          loadedCodeStrings = "";
+      }
+
+      // >>> MOVED: Assign event listeners AFTER initialization is complete
+      // Setup cursor position tracking
+      if (codesTextarea) {
+          const updateCursorPosition = () => {
+              lastEditorCursorPosition = codesTextarea.selectionStart;
+              // console.log(`Cursor position updated: ${lastEditorCursorPosition}`); // Optional debug log
+          };
+          codesTextarea.addEventListener('keyup', updateCursorPosition); // Update on key release
+          codesTextarea.addEventListener('mouseup', updateCursorPosition); // Update on mouse click release
+          codesTextarea.addEventListener('focus', updateCursorPosition);   // Update when focus is gained
+          // codesTextarea.addEventListener('blur', updateCursorPosition); // Maybe don't update on blur?
+          console.log("[Office.onReady] Added event listeners to codesTextarea for cursor tracking."); // <<< DEBUG LOG
+      }
+
+      // Setup Insert to Editor button
+      const insertToEditorButton = document.getElementById('insert-to-editor');
+      if (insertToEditorButton) {
+          console.log("[Office.onReady] Found insert-to-editor button."); // <<< DEBUG LOG
+          insertToEditorButton.onclick = insertResponseToEditor;
+          console.log("[Office.onReady] Assigned onclick for insert-to-editor button."); // <<< DEBUG LOG
+      } else {
+          console.error("[Office.onReady] Could not find button with id='insert-to-editor'");
+      }
+      // <<< END MOVED CODE
+
+      // Startup menu elements removed - navigation is handled based on auth status
+
+      // Back to Client Mode button for Developer Mode
+      const backToClientDevButton = document.getElementById('back-to-client-dev-button');
+      if (backToClientDevButton) {
+          backToClientDevButton.onclick = () => {
+              productionLog('Back to Client Mode clicked from Developer Mode');
+              showClientMode();
+          };
+      } else {
+          console.error("[Office.onReady] Could not find button with id='back-to-client-dev-button'");
+      }
+
+      document.getElementById("sideload-msg").style.display = "none";
+      const appBody = document.getElementById('app-body');
+      const clientModeView = document.getElementById('client-mode-view');
+
+      // Always skip startup menu - handled during initial load
+      productionLog('Initialization complete - startup menu skipped, auth-based navigation active');
+
+    }).catch(error => {
+        console.error("Error during initialization:", error);
+        showError("Error during initialization: " + error.message);
+    });
+
+    document.getElementById("sideload-msg").style.display = "none";
+    // document.getElementById("app-body").style.display = "block"; // Keep app-body hidden initially
+    
+    // Startup menu is always skipped - navigation is handled based on auth status
+    productionLog('Post-initialization - auth-based navigation active');
+
+    // ... (existing modal logic: applyParamsButton.onclick, window.onclick)
+
+    // --- Code Suggestion Logic (Restored) ---
+    let dynamicSuggestionsContainer = document.getElementById('dynamic-suggestions-container');
+    if (!dynamicSuggestionsContainer) {
+        dynamicSuggestionsContainer = document.createElement('div');
+        dynamicSuggestionsContainer.id = 'dynamic-suggestions-container';
+        dynamicSuggestionsContainer.className = 'code-suggestions'; // Reuse class if styling exists
+        dynamicSuggestionsContainer.style.display = 'none';
+        // Basic positioning styles (adjust in CSS for better control)
+        dynamicSuggestionsContainer.style.position = 'absolute';
+        dynamicSuggestionsContainer.style.border = '1px solid #ccc';
+        dynamicSuggestionsContainer.style.backgroundColor = 'white';
+        dynamicSuggestionsContainer.style.maxHeight = '150px';
+        dynamicSuggestionsContainer.style.overflowY = 'auto';
+        dynamicSuggestionsContainer.style.zIndex = '1000';
+
+        // Insert after the textarea's container or adjust as needed
+        if (codesTextarea && codesTextarea.parentNode) { // Check if codesTextarea exists
+            codesTextarea.parentNode.insertBefore(dynamicSuggestionsContainer, codesTextarea.nextSibling);
+        } else {
+            // Fallback: Append to body, though less ideal positioning
+            document.body.appendChild(dynamicSuggestionsContainer);
+        }
+
+        // Function to update position and width
+        const updateSuggestionPosition = () => {
+          if (dynamicSuggestionsContainer.style.display === 'block' && codesTextarea) {
+              const rect = codesTextarea.getBoundingClientRect();
+              dynamicSuggestionsContainer.style.width = codesTextarea.offsetWidth + 'px';
+              dynamicSuggestionsContainer.style.top = (rect.bottom + window.scrollY) + 'px';
+              dynamicSuggestionsContainer.style.left = (rect.left + window.scrollX) + 'px';
+          }
+        };
+
+        // Update on resize and scroll
+        window.addEventListener('resize', updateSuggestionPosition);
+        window.addEventListener('scroll', updateSuggestionPosition, true); // Use capture phase for scroll
+    }
+
+    let highlightedSuggestionIndex = -1;
+    let currentSuggestions = [];
+
+    // Helper: get text before cursor supporting contenteditable and textarea
+    const getTextBeforeCursor = (el) => {
+      if (!el) return '';
+      // Contenteditable path
+      if (el.isContentEditable || el.getAttribute('contenteditable') === 'true') {
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0) return el.innerText || '';
+        const caretRange = selection.getRangeAt(0);
+        const range = caretRange.cloneRange();
+        range.selectNodeContents(el);
+        range.setEnd(caretRange.startContainer, caretRange.startOffset);
+        const tempDiv = document.createElement('div');
+        tempDiv.appendChild(range.cloneContents());
+        return tempDiv.innerText;
+      }
+      // Textarea/input fallback
+      const cursorPos = typeof el.selectionStart === 'number' ? el.selectionStart : (el.value || '').length;
+      const text = el.value || '';
+      return text.substring(0, cursorPos);
+    };
+
+    const updateHighlight = (newIndex, targetContainer = null) => {
+      // Use the active suggestions container (fullscreen or normal)
+      const activeContainer = targetContainer || (isFullscreen ? fullscreenSuggestions : dynamicSuggestionsContainer);
+      if (!activeContainer) return; // Guard against null
+      const suggestionItems = activeContainer.querySelectorAll('.code-suggestion-item');
+      if (highlightedSuggestionIndex >= 0 && highlightedSuggestionIndex < suggestionItems.length) {
+        suggestionItems[highlightedSuggestionIndex].classList.remove('suggestion-highlight');
+      }
+      if (newIndex >= 0 && newIndex < suggestionItems.length) {
+        suggestionItems[newIndex].classList.add('suggestion-highlight');
+        suggestionItems[newIndex].scrollIntoView({ block: 'nearest' });
+      }
+      highlightedSuggestionIndex = newIndex;
+    };
+
+    const showSuggestionsForTerm = (searchTerm, targetTextarea = codesTextarea, targetSuggestions = dynamicSuggestionsContainer) => {
+        if (!targetSuggestions || !targetTextarea) {
+            console.log(`[showSuggestionsForTerm] Missing elements - targetSuggestions: ${!!targetSuggestions}, targetTextarea: ${!!targetTextarea}`);
+            return; // Guard against null
+        }
+
+        searchTerm = searchTerm.toLowerCase().trim();
+        console.log(`[showSuggestionsForTerm] Search Term: '${searchTerm}', Target: ${targetTextarea.id || 'unknown'}, Container: ${targetSuggestions.id || 'unknown'}`);
+
+        targetSuggestions.innerHTML = '';
+        highlightedSuggestionIndex = -1;
+        currentSuggestions = [];
+
+        // Allow empty term to show top suggestions when explicitly requested (e.g., new line)
+        const effectiveTerm = searchTerm;
+        const minLen = 0; // previously 2
+        if (effectiveTerm.length < minLen) {
+            console.log("[showSuggestionsForTerm] Search term too short, hiding suggestions.");
+            targetSuggestions.style.display = 'none';
+            return;
+        }
+
+        console.log("[showSuggestionsForTerm] Filtering code database...");
+        let suggestions = [];
+        if (!effectiveTerm) {
+            // Show top 10 codes alphabetically when no term provided
+            suggestions = codeDatabase
+                .filter(item => item && typeof item.name === 'string')
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .slice(0, 10);
+        } else {
+            suggestions = codeDatabase
+                .filter(item => {
+                    const hasName = item && typeof item.name === 'string';
+                    return hasName && item.name.toLowerCase().includes(effectiveTerm);
+                })
+                .slice(0, 10);
+        }
+
+        currentSuggestions = suggestions;
+        console.log(`[showSuggestionsForTerm] Found ${currentSuggestions.length} suggestions:`, currentSuggestions);
+
+        if (currentSuggestions.length > 0) {
+            console.log("[showSuggestionsForTerm] Populating suggestions container...");
+            currentSuggestions.forEach((item, i) => {
+                const suggestionDiv = document.createElement('div');
+                suggestionDiv.className = 'code-suggestion-item';
+                suggestionDiv.textContent = item.name;
+                suggestionDiv.dataset.index = i;
+
+                suggestionDiv.onclick = () => {
+                    console.log(`Suggestion clicked: '${item.name}'`);
+                    
+                    // Get the actual search term that triggered the suggestions
+                    // This should match what was typed and shown in the input event
+                    const actualSearchTerm = searchTerm;
+                    
+                    // Special handling for fullscreen contenteditable
+                    if (targetTextarea.id === 'fullscreen-codes-textarea') {
+                        // Get the actual text content
+                        const currentText = targetTextarea.innerText || '';
+                        
+                        // Get cursor position manually for contenteditable
+                        const selection = window.getSelection();
+                        let cursorPosition = 0;
+                        
+                        if (selection.rangeCount > 0) {
+                            const range = selection.getRangeAt(0).cloneRange();
+                            range.selectNodeContents(targetTextarea);
+                            range.setEnd(selection.getRangeAt(0).startContainer, selection.getRangeAt(0).startOffset);
+                            const tempDiv = document.createElement('div');
+                            tempDiv.appendChild(range.cloneContents());
+                            cursorPosition = tempDiv.innerText.length;
+                        }
+                        
+                        console.log(`Fullscreen - Current text length: ${currentText.length}, Cursor position: ${cursorPosition}`);
+                        
+                        // Find the search term to replace
+                        const textBeforeCursor = currentText.substring(0, cursorPosition);
+                        let searchStart = cursorPosition - 1;
+                        while (searchStart >= 0) {
+                            const char = textBeforeCursor[searchStart];
+                            if (/\s|\n|>|<|;|\|/.test(char)) {
+                                searchStart++;
+                                break;
+                            }
+                            searchStart--;
+                        }
+                        if (searchStart < 0) searchStart = 0;
+                        
+                        // Build the new text
+                        const textBefore = currentText.substring(0, searchStart);
+                        const textAfter = currentText.substring(cursorPosition);
+                        const newText = textBefore + item.code + textAfter;
+                        
+                        // Set the new content
+                        targetTextarea.innerText = newText;
+                        
+                        // Set cursor position after inserted code
+                        const newCursorPos = searchStart + item.code.length;
+                        
+                        // Focus and set selection
+                        targetTextarea.focus();
+                        const range = document.createRange();
+                        const sel = window.getSelection();
+                        
+                        // Find the text node and position
+                        let charCount = 0;
+                        let targetNode = null;
+                        let targetOffset = 0;
+                        
+                        const walker = document.createTreeWalker(
+                            targetTextarea,
+                            NodeFilter.SHOW_TEXT,
+                            null,
+                            false
+                        );
+                        
+                        let node;
+                        while (node = walker.nextNode()) {
+                            const nodeLength = node.textContent.length;
+                            if (charCount + nodeLength >= newCursorPos) {
+                                targetNode = node;
+                                targetOffset = newCursorPos - charCount;
+                                break;
+                            }
+                            charCount += nodeLength;
+                        }
+                        
+                        if (targetNode) {
+                            range.setStart(targetNode, targetOffset);
+                            range.collapse(true);
+                            sel.removeAllRanges();
+                            sel.addRange(range);
+                        }
+                        
+                        // Hide suggestions
+                        targetSuggestions.innerHTML = '';
+                        targetSuggestions.style.display = 'none';
+                        highlightedSuggestionIndex = -1;
+                        currentSuggestions = [];
+                        
+                        return; // Exit early for fullscreen
+                    }
+                    
+                    // Normal handling for regular textarea: replace the typed token with the selected code
+                    const currentText = targetTextarea.value;
+                    let codeToAdd = item.code;
+
+                    // Increment driver numbers as before
+                    const maxNumbers = getMaxDriverNumbers(currentText);
+                    const driverRegex = /(row\d+\s*=\s*")([A-Z]+)(\d*)(\([^)]+\))?(\|)/g;
+                    const nextNumbers = { ...maxNumbers };
+                    codeToAdd = codeToAdd.replace(driverRegex, (match, rowPart, prefix, existingNumberStr, label, pipePart) => {
+                        const key = label ? `${prefix}${label}` : prefix;
+                        nextNumbers[key] = (nextNumbers[key] || 0) + 1;
+                        const newNumber = nextNumbers[key];
+                        return `${rowPart}${prefix}${newNumber}${label || ''}${pipePart}`;
+                    });
+
+                    // Use the actual search term that was passed to showSuggestionsForTerm
+                    // Find where this search term appears in the text
+                    const searchTermToReplace = actualSearchTerm;
+                    console.log(`[Suggestion Click] Looking to replace search term: "${searchTermToReplace}"`);
+                    
+                    // Find the last occurrence of the search term before or at cursor
+                    let tokenStart = -1;
+                    if (searchTermToReplace && searchTermToReplace.length > 0) {
+                        // Search backwards from the end of the text for the search term
+                        const lastIndex = currentText.lastIndexOf(searchTermToReplace);
+                        if (lastIndex >= 0) {
+                            tokenStart = lastIndex;
+                            console.log(`[Suggestion Click] Found search term at position ${tokenStart}`);
+                        }
+                    }
+                    
+                    // If we couldn't find the exact search term, fall back to current cursor position
+                    if (tokenStart === -1) {
+                        console.log(`[Suggestion Click] Could not find search term, inserting at current position`);
+                        tokenStart = currentText.length;
+                    }
+                    
+                    const tokenEnd = tokenStart + searchTermToReplace.length;
+                    const before = currentText.substring(0, tokenStart);
+                    const after = currentText.substring(tokenEnd);
+                    
+                    console.log(`[Suggestion Click] Replacing "${searchTermToReplace}" at position ${tokenStart}-${tokenEnd}`);
+                    console.log(`[Suggestion Click] Text before: "${before.slice(-20)}"`);
+                    console.log(`[Suggestion Click] Text after: "${after.slice(0, 20)}"`);
+
+                    // Simply replace the search term with the code, no newline manipulation
+                    const finalCodeToAdd = codeToAdd;
+
+                    const newText = before + finalCodeToAdd + after;
+                    targetTextarea.value = newText;
+
+                    // Place cursor right after the inserted code
+                    // But if next char is newline, stay on the '>' to avoid appearing on next line
+                    const idealCursorPos = before.length + finalCodeToAdd.length;
+                    const charAtIdealPos = newText[idealCursorPos];
+                    
+                    let newCursorPos;
+                    if (charAtIdealPos === '\n') {
+                        // Place cursor ON the '>' character to stay on same line visually
+                        newCursorPos = idealCursorPos - 1;
+                        console.log(`[Suggestion Click] Next char is newline, placing cursor on '>' to stay on same line`);
+                    } else {
+                        // Normal placement after the code
+                        newCursorPos = idealCursorPos;
+                    }
+                    
+                    console.log(`[Suggestion Click] Setting cursor to position ${newCursorPos}`);
+                    console.log(`[Suggestion Click] Character at cursor: "${newText[newCursorPos]}"`);
+                    
+                    targetTextarea.focus();
+                    targetTextarea.setSelectionRange(newCursorPos, newCursorPos);
+                    
+                    // Reset horizontal scroll to the left
+                    targetTextarea.scrollLeft = 0;
+                    console.log(`[Suggestion Click] Reset horizontal scroll to left`);
+                    
+                    // Highlighting disabled to preserve line breaks
+                    // if (targetTextarea === codesTextarea) {
+                    //     setTimeout(() => applyQuoteHighlighting(), 0);
+                    // } else {
+                    //     setTimeout(() => applyQuoteHighlightingToElement(targetTextarea), 0);
+                    // }
+
+                    targetSuggestions.innerHTML = '';
+                    targetSuggestions.style.display = 'none';
+                    highlightedSuggestionIndex = -1;
+                    currentSuggestions = [];
+                };
+
+                suggestionDiv.onmouseover = () => {
+                    updateHighlight(i);
+                };
+
+                targetSuggestions.appendChild(suggestionDiv);
+            });
+            console.log("[showSuggestionsForTerm] Setting suggestions display to 'block'");
+
+            // Different positioning for fullscreen vs normal mode
+            if (targetSuggestions.id === 'fullscreen-suggestions-container') {
+                // For fullscreen, position near the top of the editor
+                const editorRect = targetTextarea.getBoundingClientRect();
+                targetSuggestions.style.top = (editorRect.top + 50) + 'px';
+                targetSuggestions.style.left = (editorRect.left + 20) + 'px';
+                targetSuggestions.style.width = 'auto';
+            } else {
+                // Normal positioning for regular editor
+                const rect = targetTextarea.getBoundingClientRect();
+                targetSuggestions.style.width = targetTextarea.offsetWidth + 'px';
+                targetSuggestions.style.top = (rect.bottom + window.scrollY) + 'px';
+                targetSuggestions.style.left = (rect.left + window.scrollX) + 'px';
+            }
+            targetSuggestions.style.display = 'block';
+        } else {
+            console.log("[showSuggestionsForTerm] No suggestions found, hiding container.");
+            targetSuggestions.style.display = 'none';
+        }
+    };
+
+    // Add textarea-like properties to contenteditable div
+    if (codesTextarea) {
+        // Make contenteditable behave like textarea
+        Object.defineProperty(codesTextarea, 'value', {
+            get: function() {
+                return this.innerText || '';
+            },
+            set: function(text) {
+                this.innerText = text;
+                // applyQuoteHighlighting(); // Disabled to preserve line breaks
+            }
+        });
+        
+        Object.defineProperty(codesTextarea, 'selectionStart', {
+            get: function() {
+                const selection = window.getSelection();
+                if (selection.rangeCount === 0) return 0;
+                
+                const range = selection.getRangeAt(0).cloneRange();
+                range.selectNodeContents(this);
+                range.setEnd(selection.getRangeAt(0).startContainer, selection.getRangeAt(0).startOffset);
+                
+                // Count actual characters, not HTML
+                const tempDiv = document.createElement('div');
+                tempDiv.appendChild(range.cloneContents());
+                return tempDiv.innerText.length;
+            }
+        });
+        
+        codesTextarea.setSelectionRange = function(start, end) {
+            const range = document.createRange();
+            const selection = window.getSelection();
+            
+            let currentPos = 0;
+            const walker = document.createTreeWalker(
+                this,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+            
+            let startNode = null, endNode = null;
+            let startOffset = 0, endOffset = 0;
+            
+            let node;
+            while (node = walker.nextNode()) {
+                const nodeLength = node.textContent.length;
+                
+                if (!startNode && currentPos + nodeLength >= start) {
+                    startNode = node;
+                    startOffset = start - currentPos;
+                }
+                
+                if (!endNode && currentPos + nodeLength >= end) {
+                    endNode = node;
+                    endOffset = end - currentPos;
+                    break;
+                }
+                
+                currentPos += nodeLength;
+            }
+            
+            if (startNode) {
+                range.setStart(startNode, startOffset);
+                if (endNode) {
+                    range.setEnd(endNode, endOffset);
+                } else {
+                    range.setEnd(startNode, startOffset);
+                }
+                
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+        };
+        
+    }
+    
+    // Function to apply quote highlighting - DISABLED to preserve line breaks
+    const applyQuoteHighlighting = () => {
+        // DISABLED: Quote highlighting was stripping line breaks
+        // The autopopulate functionality still works without this
+        return;
+        
+        /* Original implementation commented out to preserve line breaks
+        if (!codesTextarea) return;
+        
+        // Get current selection/cursor position before any changes
+        const selection = window.getSelection();
+        const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+        const cursorOffset = range ? range.startOffset : 0;
+        const cursorContainer = range ? range.startContainer : null;
+        
+        // Get the current HTML content
+        const currentHTML = codesTextarea.innerHTML;
+        
+        // Check if we've already processed this content (to avoid unnecessary updates)
+        if (codesTextarea.dataset.lastProcessedHTML === currentHTML) {
+            return;
+        }
+        
+        // Get all child nodes
+        const childNodes = Array.from(codesTextarea.childNodes);
+        
+        // Process each node
+        childNodes.forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                const text = node.textContent;
+                if (!text.includes('"') && !text.includes("'")) {
+                    return; // Skip nodes without quotes
+                }
+                
+                // Create a document fragment to hold the new nodes
+                const fragment = document.createDocumentFragment();
+                let currentText = '';
+                let inQuote = false;
+                let quoteChar = '';
+                
+                for (let i = 0; i < text.length; i++) {
+                    const char = text[i];
+                    
+                    if (!inQuote && (char === '"' || char === "'")) {
+                        // Start of quote - append any accumulated text first
+                        if (currentText) {
+                            fragment.appendChild(document.createTextNode(currentText));
+                            currentText = '';
+                        }
+                        inQuote = true;
+                        quoteChar = char;
+                        currentText = char;
+                    } else if (inQuote && char === quoteChar) {
+                        // End of quote
+                        currentText += char;
+                        const span = document.createElement('span');
+                        span.className = 'quote-text';
+                        span.textContent = currentText;
+                        fragment.appendChild(span);
+                        currentText = '';
+                        inQuote = false;
+                        quoteChar = '';
+                    } else {
+                        currentText += char;
+                    }
+                }
+                
+                // Append any remaining text
+                if (currentText) {
+                    if (inQuote) {
+                        // Unclosed quote
+                        const span = document.createElement('span');
+                        span.className = 'quote-text';
+                        span.textContent = currentText;
+                        fragment.appendChild(span);
+                    } else {
+                        fragment.appendChild(document.createTextNode(currentText));
+                    }
+                }
+                
+                // Replace the text node with the fragment
+                if (fragment.childNodes.length > 0) {
+                    node.parentNode.replaceChild(fragment, node);
+                }
+            } else if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+                // Preserve line breaks
+                return;
+            } else if (node.nodeType === Node.ELEMENT_NODE && node.className !== 'quote-text') {
+                // For other elements, recursively process their text content
+                // but only if they're not already quote-text spans
+                const textNodes = [];
+                const walker = document.createTreeWalker(
+                    node,
+                    NodeFilter.SHOW_TEXT,
+                    null,
+                    false
+                );
+                let textNode;
+                while (textNode = walker.nextNode()) {
+                    textNodes.push(textNode);
+                }
+                // Process text nodes within this element
+                textNodes.forEach(textNode => {
+                    if (textNode.parentNode.className === 'quote-text') {
+                        return; // Skip if already in a quote span
+                    }
+                    const text = textNode.textContent;
+                    if (!text.includes('"') && !text.includes("'")) {
+                        return;
+                    }
+                    
+                    const fragment = document.createDocumentFragment();
+                    let currentText = '';
+                    let inQuote = false;
+                    let quoteChar = '';
+                    
+                    for (let i = 0; i < text.length; i++) {
+                        const char = text[i];
+                        
+                        if (!inQuote && (char === '"' || char === "'")) {
+                            if (currentText) {
+                                fragment.appendChild(document.createTextNode(currentText));
+                                currentText = '';
+                            }
+                            inQuote = true;
+                            quoteChar = char;
+                            currentText = char;
+                        } else if (inQuote && char === quoteChar) {
+                            currentText += char;
+                            const span = document.createElement('span');
+                            span.className = 'quote-text';
+                            span.textContent = currentText;
+                            fragment.appendChild(span);
+                            currentText = '';
+                            inQuote = false;
+                            quoteChar = '';
+                        } else {
+                            currentText += char;
+                        }
+                    }
+                    
+                    if (currentText) {
+                        if (inQuote) {
+                            const span = document.createElement('span');
+                            span.className = 'quote-text';
+                            span.textContent = currentText;
+                            fragment.appendChild(span);
+                        } else {
+                            fragment.appendChild(document.createTextNode(currentText));
+                        }
+                    }
+                    
+                    if (fragment.childNodes.length > 0) {
+                        textNode.parentNode.replaceChild(fragment, textNode);
+                    }
+                });
+            }
+        });
+        
+        // Store the processed HTML to avoid reprocessing
+        codesTextarea.dataset.lastProcessedHTML = codesTextarea.innerHTML;
+        
+        // Try to restore cursor position if we had one
+        if (cursorContainer && range) {
+            try {
+                const newRange = document.createRange();
+                newRange.setStart(cursorContainer, Math.min(cursorOffset, cursorContainer.length || 0));
+                newRange.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(newRange);
+            } catch (e) {
+                // Cursor restoration failed, that's okay
+            }
+        }
+        */
+    };
+
+    if (codesTextarea && dynamicSuggestionsContainer) {
+        // Track if we just pressed Enter to start a new line
+        let showSuggestionsOnNewLine = false;
+        
+        const processForSuggestions = (event) => {
+             if (!dynamicSuggestionsContainer) {
+                 return;
+             }
+            // Build textBeforeCursor robustly for contenteditable
+            const textBeforeCursor = getTextBeforeCursor(codesTextarea);
+            const currentText = codesTextarea.value;
+            const cursorPosition = textBeforeCursor.length;
+            
+            // Check if we just created a new line
+            if (showSuggestionsOnNewLine && textBeforeCursor.endsWith('\n')) {
+                showSuggestionsOnNewLine = false;
+                console.log("[Textarea] New line detected - showing all suggestions");
+                showSuggestionsForTerm(''); // Show all suggestions
+                return;
+            }
+            
+            // Find the search term - look back from cursor to find the start of the current code token (letters and hyphens)
+            let searchStart = cursorPosition;
+            for (let i = cursorPosition - 1; i >= 0; i--) {
+                const char = textBeforeCursor[i];
+                // Treat any non-letter and non-hyphen as a delimiter
+                if (!/[a-zA-Z-]/.test(char)) {
+                    searchStart = i + 1;
+                    break;
+                }
+                if (i === 0) {
+                    searchStart = 0;
+                }
+            }
+
+            const searchTerm = textBeforeCursor.substring(searchStart, cursorPosition);
+            const trimmedSearchTerm = searchTerm.trim();
+            
+            console.log(`[Textarea Input] Search term: "${searchTerm}", Trimmed: "${trimmedSearchTerm}"`);
+
+            if (trimmedSearchTerm.length === 0) {
+                console.log(`[Textarea Input] Empty search term`);
+                if (showSuggestionsOnNewLine) {
+                    showSuggestionsForTerm(''); // Show top suggestions on new line
+                    showSuggestionsOnNewLine = false;
+                } else {
+                    dynamicSuggestionsContainer.style.display = 'none';
+                    highlightedSuggestionIndex = -1;
+                    currentSuggestions = [];
+                }
+            } else {
+                console.log(`[Textarea Input] Showing suggestions for: '${searchTerm}'`);
+                showSuggestionsForTerm(searchTerm);
+            }
+        };
+
+        // Primary: input for live typing
+        codesTextarea.oninput = processForSuggestions;
+        // Fallback: keyup for cases where programmatic changes or IME composition
+        codesTextarea.addEventListener('keyup', (e) => {
+            // Ignore navigation keys; process character-affecting keys
+            const ignored = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Shift','Control','Alt','Meta'];
+            if (ignored.includes(e.key)) return;
+            processForSuggestions(e);
+        });
+
+        codesTextarea.addEventListener('keydown', (event) => {
+            // Check if Enter is pressed and no suggestions are showing
+            if (event.key === 'Enter') {
+                if (!dynamicSuggestionsContainer || dynamicSuggestionsContainer.style.display !== 'block' || currentSuggestions.length === 0) {
+                    // No suggestions showing, so this is a regular Enter for new line
+                    showSuggestionsOnNewLine = true;
+                    console.log("[Textarea] Enter pressed for new line - will show suggestions");
+                    return;
+                }
+            }
+            
+            if (!dynamicSuggestionsContainer || dynamicSuggestionsContainer.style.display !== 'block' || currentSuggestions.length === 0) {
+                return;
+            }
+
+            const suggestionItems = dynamicSuggestionsContainer.querySelectorAll('.code-suggestion-item');
+            let newIndex = highlightedSuggestionIndex;
+
+            switch (event.key) {
+                case 'ArrowDown':
+                case 'ArrowUp':
+                    event.preventDefault();
+                    newIndex = event.key === 'ArrowDown'
+                        ? (highlightedSuggestionIndex + 1) % currentSuggestions.length
+                        : (highlightedSuggestionIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
+                    updateHighlight(newIndex);
+                    break;
+
+                case 'Enter':
+                 case 'Tab':
+                    event.preventDefault();
+                    if (highlightedSuggestionIndex >= 0 && highlightedSuggestionIndex < suggestionItems.length) {
+                        suggestionItems[highlightedSuggestionIndex].click();
+                    } else if (currentSuggestions.length > 0 && suggestionItems.length > 0) {
+                         suggestionItems[0].click(); // Select first if none highlighted
+                    }
+                    showSuggestionsOnNewLine = false; // Don't show suggestions after selecting
+                    // Suggestion click handles hiding
+                    break;
+
+                case 'Escape':
+                    event.preventDefault();
+                    dynamicSuggestionsContainer.style.display = 'none';
+                    highlightedSuggestionIndex = -1;
+                    currentSuggestions = [];
+                    break;
+
+                default:
+                    if (!event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
+                       updateHighlight(-1);
+                    }
+                    break;
+            }
+        });
+
+         codesTextarea.addEventListener('blur', () => {
+             if (!dynamicSuggestionsContainer) return;
+             setTimeout(() => {
+                 if (!dynamicSuggestionsContainer.contains(document.activeElement)) {
+                      dynamicSuggestionsContainer.style.display = 'none';
+                      highlightedSuggestionIndex = -1;
+                 }
+             }, 150);
+         });
+        
+        // Highlighting disabled to preserve line breaks
+        // codesTextarea.addEventListener('paste', () => {
+        //     setTimeout(() => applyQuoteHighlighting(), 10);
+        // });
+        
+        // codesTextarea.addEventListener('blur', () => {
+        //     applyQuoteHighlighting();
+        // });
+    }
+    // --- End of Code Suggestion Logic ---
+
+    // >>> ADDED: Fullscreen Code Editor Functionality
+    const fullscreenModal = document.getElementById('fullscreen-modal');
+    const fullscreenToggleButton = document.getElementById('fullscreen-toggle-button');
+    const fullscreenCloseButton = document.getElementById('fullscreen-close-button');
+    const fullscreenTextarea = document.getElementById('fullscreen-codes-textarea');
+    const fullscreenSuggestions = document.getElementById('fullscreen-suggestions-container');
+    let isFullscreen = false;
+
+    // Add textarea-like properties to fullscreen contenteditable div
+    if (fullscreenTextarea) {
+        Object.defineProperty(fullscreenTextarea, 'value', {
+            get: function() {
+                return this.innerText || '';
+            },
+            set: function(text) {
+                this.innerText = text;
+                // applyQuoteHighlightingToElement(this); // Disabled to preserve line breaks
+            }
+        });
+        
+        Object.defineProperty(fullscreenTextarea, 'selectionStart', {
+            get: function() {
+                const selection = window.getSelection();
+                if (selection.rangeCount === 0) return 0;
+                
+                const range = selection.getRangeAt(0).cloneRange();
+                range.selectNodeContents(this);
+                range.setEnd(selection.getRangeAt(0).startContainer, selection.getRangeAt(0).startOffset);
+                
+                // Count actual characters, not HTML
+                const tempDiv = document.createElement('div');
+                tempDiv.appendChild(range.cloneContents());
+                return tempDiv.innerText.length;
+            }
+        });
+        
+        fullscreenTextarea.setSelectionRange = function(start, end) {
+            const range = document.createRange();
+            const selection = window.getSelection();
+            
+            let currentPos = 0;
+            const walker = document.createTreeWalker(
+                this,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+            
+            let startNode = null, endNode = null;
+            let startOffset = 0, endOffset = 0;
+            
+            let node;
+            while (node = walker.nextNode()) {
+                const nodeLength = node.textContent.length;
+                
+                if (!startNode && currentPos + nodeLength >= start) {
+                    startNode = node;
+                    startOffset = start - currentPos;
+                }
+                
+                if (!endNode && currentPos + nodeLength >= end) {
+                    endNode = node;
+                    endOffset = end - currentPos;
+                    break;
+                }
+                
+                currentPos += nodeLength;
+            }
+            
+            if (startNode) {
+                range.setStart(startNode, startOffset);
+                if (endNode) {
+                    range.setEnd(endNode, endOffset);
+                } else {
+                    range.setEnd(startNode, startOffset);
+                }
+                
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+        };
+    }
+
+    // Function to apply quote highlighting to any element - DISABLED to preserve line breaks
+    const applyQuoteHighlightingToElement = (element) => {
+        // DISABLED: Quote highlighting was stripping line breaks
+        // The autopopulate functionality still works without this
+        return;
+        
+        /* Original implementation commented out to preserve line breaks
+        if (!element) return;
+        
+        // Use the same improved approach as the main highlighting function
+        const selection = window.getSelection();
+        const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+        const cursorOffset = range ? range.startOffset : 0;
+        const cursorContainer = range ? range.startContainer : null;
+        
+        const currentHTML = element.innerHTML;
+        
+        if (element.dataset.lastProcessedHTML === currentHTML) {
+            return;
+        }
+        
+        const childNodes = Array.from(element.childNodes);
+        
+        childNodes.forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                const text = node.textContent;
+                if (!text.includes('"') && !text.includes("'")) {
+                    return;
+                }
+                
+                const fragment = document.createDocumentFragment();
+                let currentText = '';
+                let inQuote = false;
+                let quoteChar = '';
+                
+                for (let i = 0; i < text.length; i++) {
+                    const char = text[i];
+                    
+                    if (!inQuote && (char === '"' || char === "'")) {
+                        if (currentText) {
+                            fragment.appendChild(document.createTextNode(currentText));
+                            currentText = '';
+                        }
+                        inQuote = true;
+                        quoteChar = char;
+                        currentText = char;
+                    } else if (inQuote && char === quoteChar) {
+                        currentText += char;
+                        const span = document.createElement('span');
+                        span.className = 'quote-text';
+                        span.textContent = currentText;
+                        fragment.appendChild(span);
+                        currentText = '';
+                        inQuote = false;
+                        quoteChar = '';
+                    } else {
+                        currentText += char;
+                    }
+                }
+                
+                if (currentText) {
+                    if (inQuote) {
+                        const span = document.createElement('span');
+                        span.className = 'quote-text';
+                        span.textContent = currentText;
+                        fragment.appendChild(span);
+                    } else {
+                        fragment.appendChild(document.createTextNode(currentText));
+                    }
+                }
+                
+                if (fragment.childNodes.length > 0) {
+                    node.parentNode.replaceChild(fragment, node);
+                }
+            } else if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'BR') {
+                return; // Preserve line breaks
+            }
+        });
+        
+        element.dataset.lastProcessedHTML = element.innerHTML;
+        
+        if (cursorContainer && range) {
+            try {
+                const newRange = document.createRange();
+                newRange.setStart(cursorContainer, Math.min(cursorOffset, cursorContainer.length || 0));
+                newRange.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(newRange);
+            } catch (e) {
+                // Cursor restoration failed, that's okay
+            }
+        }
+        */
+    };
+
+    // Function to sync content between normal and fullscreen editors
+    const syncToFullscreen = () => {
+        if (codesTextarea && fullscreenTextarea) {
+            fullscreenTextarea.value = codesTextarea.value;
+        }
+    };
+
+    const syncFromFullscreen = () => {
+        if (codesTextarea && fullscreenTextarea) {
+            codesTextarea.value = fullscreenTextarea.value;
+            // Trigger input event to ensure autopopulate continues working
+            const inputEvent = new Event('input', { bubbles: true, cancelable: true });
+            codesTextarea.dispatchEvent(inputEvent);
+        }
+    };
+
+    // Function to enter fullscreen mode
+    const enterFullscreen = () => {
+        if (!fullscreenModal || !fullscreenTextarea) return;
+        
+        syncToFullscreen();
+        fullscreenModal.style.display = 'flex';
+        isFullscreen = true;
+        
+        // Focus the fullscreen editor
+        setTimeout(() => {
+            fullscreenTextarea.focus();
+        }, 100);
+        
+        // Update button text
+        const buttonLabel = fullscreenToggleButton?.querySelector('.ms-Button-label');
+        if (buttonLabel) {
+            buttonLabel.textContent = '✕ Exit Fullscreen';
+        }
+    };
+
+    // Function to exit fullscreen mode
+    const exitFullscreen = () => {
+        if (!fullscreenModal) return;
+        
+        syncFromFullscreen();
+        fullscreenModal.style.display = 'none';
+        isFullscreen = false;
+        
+        // Focus the normal editor
+        setTimeout(() => {
+            if (codesTextarea) codesTextarea.focus();
+        }, 100);
+        
+        // Update button text
+        const buttonLabel = fullscreenToggleButton?.querySelector('.ms-Button-label');
+        if (buttonLabel) {
+            buttonLabel.textContent = '⛶ Fullscreen';
+        }
+    };
+
+    // Set up event listeners
+    if (fullscreenToggleButton) {
+        fullscreenToggleButton.addEventListener('click', () => {
+            if (isFullscreen) {
+                exitFullscreen();
+            } else {
+                enterFullscreen();
+            }
+        });
+    }
+
+    if (fullscreenCloseButton) {
+        fullscreenCloseButton.addEventListener('click', exitFullscreen);
+    }
+
+    // ESC key to exit fullscreen
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && isFullscreen) {
+            exitFullscreen();
+        }
+    });
+
+    // Click outside modal to close (optional)
+    if (fullscreenModal) {
+        fullscreenModal.addEventListener('click', (event) => {
+            if (event.target === fullscreenModal) {
+                exitFullscreen();
+            }
+        });
+    }
+
+    // Add fullscreen editor support for suggestions and highlighting
+    if (fullscreenTextarea && fullscreenSuggestions) {
+        // Apply all the same functionality to fullscreen editor
+        const handleFullscreenInput = (event) => {
+            // Skip handling for arrow keys and other navigation keys
+            if (event && event.type === 'keyup') {
+                const key = event.key;
+                if (key === 'ArrowUp' || key === 'ArrowDown' || key === 'ArrowLeft' || key === 'ArrowRight' || 
+                    key === 'Enter' || key === 'Tab' || key === 'Escape') {
+                    return; // Don't refresh suggestions for navigation keys
+                }
+            }
+            
+            if (!fullscreenSuggestions) {
+                return;
+            }
+            
+            const cursorPosition = fullscreenTextarea.selectionStart;
+            const currentText = fullscreenTextarea.value;
+            
+            console.log(`[Fullscreen Debug] Text length: ${currentText.length}, Cursor position: ${cursorPosition}`);
+
+            const textBeforeCursor = currentText.substring(0, cursorPosition);
+            
+            // Improved bracket detection - only check immediate context around cursor
+            let isInsideBrackets = false;
+            
+            // Look for the nearest bracket pair around the cursor
+            // Start from cursor and go backwards to find the most recent bracket
+            let searchPos = cursorPosition - 1;
+            let foundOpenBracket = false;
+            let openBracketPos = -1;
+            
+            // Only search back a reasonable distance (e.g., 100 characters)
+            const searchLimit = Math.max(0, cursorPosition - 100);
+            
+            while (searchPos >= searchLimit) {
+                const char = currentText[searchPos];
+                if (char === '>') {
+                    // Found a close bracket before an open bracket, so we're not inside brackets
+                    break;
+                } else if (char === '<') {
+                    // Found an open bracket
+                    foundOpenBracket = true;
+                    openBracketPos = searchPos;
+                    break;
+                }
+                searchPos--;
+            }
+            
+            // If we found an open bracket, check if there's a matching close bracket after cursor
+            if (foundOpenBracket) {
+                const textAfterCursor = currentText.substring(cursorPosition);
+                const nextCloseBracket = textAfterCursor.indexOf('>');
+                const nextOpenBracket = textAfterCursor.indexOf('<');
+                
+                // We're only inside brackets if the next close bracket comes before the next open bracket
+                if (nextCloseBracket !== -1 && (nextOpenBracket === -1 || nextCloseBracket < nextOpenBracket)) {
+                    isInsideBrackets = true;
+                }
+            }
+
+            if (isInsideBrackets) {
+                console.log("[Fullscreen Input] Cursor inside <>, hiding suggestions.");
+                fullscreenSuggestions.style.display = 'none';
+                highlightedSuggestionIndex = -1;
+                currentSuggestions = [];
+            } else {
+                console.log("[Fullscreen Input] Cursor NOT inside <>, checking for search term...");
+                let searchStart = cursorPosition - 1;
+                while (searchStart >= 0) {
+                    const char = textBeforeCursor[searchStart];
+                    if (/\s|\n|>|<|;|\|/.test(char)) {
+                        searchStart++;
+                        break;
+                    }
+                    searchStart--;
+                }
+                if (searchStart < 0) searchStart = 0;
+
+                const searchTerm = textBeforeCursor.substring(searchStart, cursorPosition);
+                const trimmedSearchTerm = searchTerm.trim();
+
+                if (trimmedSearchTerm.length === 0 || !/^[a-zA-Z]/.test(trimmedSearchTerm)) {
+                    fullscreenSuggestions.style.display = 'none';
+                    highlightedSuggestionIndex = -1;
+                    currentSuggestions = [];
+                } else {
+                    console.log(`[Fullscreen] Calling showSuggestionsForTerm with: '${searchTerm}'`);
+                    showSuggestionsForTerm(searchTerm, fullscreenTextarea, fullscreenSuggestions);
+                }
+            }
+        };
+        
+        // Use input event for text changes and keyup for other updates
+        fullscreenTextarea.addEventListener('input', handleFullscreenInput);
+        fullscreenTextarea.addEventListener('keyup', handleFullscreenInput);
+
+        fullscreenTextarea.addEventListener('keydown', (event) => {
+            if (!fullscreenSuggestions || fullscreenSuggestions.style.display !== 'block' || currentSuggestions.length === 0) {
+                return;
+            }
+
+            const suggestionItems = fullscreenSuggestions.querySelectorAll('.code-suggestion-item');
+            let newIndex = highlightedSuggestionIndex;
+
+            switch (event.key) {
+                case 'ArrowDown':
+                case 'ArrowUp':
+                    event.preventDefault();
+                    event.stopPropagation(); // Stop event from bubbling
+                    newIndex = event.key === 'ArrowDown'
+                        ? (highlightedSuggestionIndex + 1) % currentSuggestions.length
+                        : (highlightedSuggestionIndex - 1 + currentSuggestions.length) % currentSuggestions.length;
+                    
+                    // Directly handle highlighting for fullscreen
+                    if (highlightedSuggestionIndex >= 0 && highlightedSuggestionIndex < suggestionItems.length) {
+                        suggestionItems[highlightedSuggestionIndex].classList.remove('suggestion-highlight');
+                    }
+                    if (newIndex >= 0 && newIndex < suggestionItems.length) {
+                        suggestionItems[newIndex].classList.add('suggestion-highlight');
+                        suggestionItems[newIndex].scrollIntoView({ block: 'nearest' });
+                    }
+                    highlightedSuggestionIndex = newIndex;
+                    break;
+
+                case 'Enter':
+                 case 'Tab':
+                    event.preventDefault();
+                    if (highlightedSuggestionIndex >= 0 && highlightedSuggestionIndex < suggestionItems.length) {
+                        suggestionItems[highlightedSuggestionIndex].click();
+                    } else if (currentSuggestions.length > 0 && suggestionItems.length > 0) {
+                         suggestionItems[0].click();
+                    }
+                    break;
+
+                case 'Escape':
+                    event.preventDefault();
+                    fullscreenSuggestions.style.display = 'none';
+                    highlightedSuggestionIndex = -1;
+                    currentSuggestions = [];
+                    break;
+
+                default:
+                    if (!event.ctrlKey && !event.altKey && !event.metaKey && event.key.length === 1) {
+                        // Continue normal typing
+                    }
+                    break;
+            }
+        });
+
+        fullscreenTextarea.addEventListener('blur', (event) => {
+             if (!fullscreenSuggestions) return;
+             setTimeout(() => {
+                 if (!fullscreenSuggestions.contains(document.activeElement)) {
+                      fullscreenSuggestions.style.display = 'none';
+                      highlightedSuggestionIndex = -1;
+                 }
+             }, 150);
+         });
+        
+        // Add highlighting for paste events in fullscreen
+        fullscreenTextarea.addEventListener('paste', () => {
+            setTimeout(() => applyQuoteHighlightingToElement(fullscreenTextarea), 10);
+        });
+        
+        // Add highlighting when clicking out of fullscreen editor
+        fullscreenTextarea.addEventListener('blur', () => {
+            applyQuoteHighlightingToElement(fullscreenTextarea);
+        });
+    }
+    // <<< END ADDED
+
+    // >>> ADDED: Setup for the Clear Training Data Queue button
+    const clearTrainingDataQueButtonHTML = document.getElementById('clear-training-data-que-button');
+    if (clearTrainingDataQueButtonHTML) {
+        clearTrainingDataQueButtonHTML.onclick = clearTrainingDataQueue; // Use the local function
+    } else {
+        console.error("Could not find button with id='clear-training-data-que-button' for developer mode.");
+    }
+    // <<< END ADDED
+
+    // >>> ADDED: Setup for the Attach Actuals button
+    const attachActualsButton = document.getElementById('attach-actuals-button');
+    if (attachActualsButton) {
+        attachActualsButton.onclick = handleAttachActuals;
+    } else {
+        console.error("Could not find button with id='attach-actuals-button' for developer mode.");
+    }
+    // <<< END ADDED
+
+    // >>> ADDED: Microsoft Authentication Setup
+    // Initialize authentication system
+    try {
+        // Microsoft authentication removed - using Google auth only
+        console.log('Using Google authentication only');
+    } catch (error) {
+        console.error('Error initializing authentication:', error);
+        showError('Failed to set up authentication: ' + error.message);
+    }
+
+    // Setup authentication event handlers
+    const signInButton = document.getElementById('sign-in-button');
+    if (signInButton) {
+        signInButton.onclick = async () => {
+            try {
+                await signIn();
+            } catch (error) {
+                console.error('Sign-in error:', error);
+                showError('Sign-in failed. Please try again.');
+            }
+        };
+        
+        // Always show the sign-in button initially (it will be managed by auth state)
+        signInButton.style.display = 'flex';
+        console.log('Sign-in button event handler attached and button shown');
+    } else {
+        console.log('Sign-in button not found (may be in different mode)');
+    }
+
+    const signOutButton = document.getElementById('sign-out-button');
+    if (signOutButton) {
+        signOutButton.onclick = async () => {
+            try {
+                await signOut();
+            } catch (error) {
+                console.error('Sign-out error:', error);
+                showError('Sign-out failed. Please try again.');
+            }
+        };
+        console.log('Sign-out button event handler attached');
+    } else {
+        console.log('Sign-out button not found (may be in different mode)');
+    }
+
+    // Add event listener for the mini sign-out button in client mode
+    const signOutMiniButton = document.getElementById('sign-out-mini-button');
+    if (signOutMiniButton) {
+        signOutMiniButton.onclick = async () => {
+            try {
+                await signOut();
+            } catch (error) {
+                console.error('Sign-out error:', error);
+                showError('Sign-out failed. Please try again.');
+            }
+        };
+        console.log('Sign-out mini button event handler attached');
+    } else {
+        console.log('Sign-out mini button not found');
+    }
+    // <<< END ADDED
+
+    // >>> ADDED: Fullscreen toggle functionality for code editor
+    const fullscreenToggle = document.getElementById('fullscreen-toggle');
+    if (fullscreenToggle) {
+        // Use the existing isFullscreen variable from outer scope
+        
+        fullscreenToggle.onclick = () => {
+            const appBody = document.getElementById('app-body');
+            if (!appBody) return;
+            
+            if (!isFullscreen) {
+                // Enter fullscreen mode
+                appBody.classList.add('code-fullscreen');
+                fullscreenToggle.title = 'Exit fullscreen';
+                
+                // Update icon to exit fullscreen icon
+                fullscreenToggle.innerHTML = `
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                    </svg>
+                `;
+                isFullscreen = true;
+                console.log('Code editor entered fullscreen mode');
+            } else {
+                // Exit fullscreen mode
+                appBody.classList.remove('code-fullscreen');
+                fullscreenToggle.title = 'Toggle fullscreen';
+                
+                // Update icon back to expand icon
+                fullscreenToggle.innerHTML = `
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                    </svg>
+                `;
+                isFullscreen = false;
+                console.log('Code editor exited fullscreen mode');
+            }
+        };
+        
+        // ESC key to exit fullscreen
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && isFullscreen) {
+                fullscreenToggle.click();
+            }
+        });
+        
+        console.log('Fullscreen toggle button initialized');
+    } else {
+        console.error("Could not find fullscreen toggle button with id='fullscreen-toggle'");
+    }
+    // <<< END ADDED
+
+    // Window click handler to close modals when clicking outside
+    window.onclick = function(event) {
+        const trainingDataModal = document.getElementById('training-data-modal');
+        const codeParamsModal = document.getElementById('code-params-modal');
+        
+        // Close training data modal if clicking outside
+        if (trainingDataModal && event.target === trainingDataModal) {
+            hideTrainingDataModal();
+        }
+        
+        // Close code params modal if clicking outside (existing functionality)
+        if (codeParamsModal && event.target === codeParamsModal) {
+            hideParamsModal();
+        }
+    };
+
+    // Initialize new header menu functionality
+    function initializeHeaderMenu() {
+        const hamburgerButton = document.getElementById('hamburger-menu');
+        const slideMenu = document.getElementById('slide-menu');
+        const closeMenuButton = document.getElementById('close-menu');
+        const profileModal = document.getElementById('profile-modal');
+        const modalCloseButton = profileModal?.querySelector('.modal-close-button');
+        const accountModal = document.getElementById('account-modal');
+        const accountModalCloseButton = accountModal?.querySelector('.modal-close-button');
+        const composeButton = document.getElementById('compose-new-message');
+        
+        // Hamburger menu toggle
+        if (hamburgerButton && slideMenu) {
+            hamburgerButton.addEventListener('click', () => {
+                slideMenu.classList.add('open');
+            });
+            
+            closeMenuButton?.addEventListener('click', () => {
+                slideMenu.classList.remove('open');
+            });
+        }
+        
+        // Compose new message button
+        if (composeButton) {
+            composeButton.addEventListener('click', () => {
+                // Clear the current conversation and reset to welcome screen
+                resetChatClient();
+                console.log("[Compose] Started new conversation");
+                
+                // Focus on the input field after reset
+                setTimeout(() => {
+                    const userInput = document.getElementById('user-input-client');
+                    if (userInput) {
+                        userInput.focus();
+                    }
+                }, 100);
+            });
+        }
+        
+        // Menu item actions (robust: delegate on nav to capture clicks on inner SVG/spans)
+        const slideMenuNav = document.querySelector('.slide-menu-nav');
+        if (slideMenuNav) {
+            slideMenuNav.addEventListener('click', (event) => {
+                const item = event.target.closest('button.menu-item');
+                if (!item) return;
+                const action = item.dataset.action;
+                
+                switch (action) {
+                    case 'chat':
+                        // Show chat panel, hide subscription panel
+                        document.getElementById('client-chat-container').style.display = 'flex';
+                        document.getElementById('subscription-panel').style.display = 'none';
+                        slideMenu.classList.remove('open');
+                        break;
+                        
+                    case 'subscription':
+                        // Show subscription panel, hide chat
+                        document.getElementById('client-chat-container').style.display = 'none';
+                        document.getElementById('subscription-panel').style.display = 'block';
+                        slideMenu.classList.remove('open');
+                        break;
+                        
+                    case 'plans':
+                        // Open pricing/credits page in default browser
+                        try {
+                            window.open('https://ebitdai.co/credits', '_blank');
+                        } catch (e) {
+                            console.warn('Failed to open plans link, falling back');
+                            location.href = 'https://ebitdai.co/credits';
+                        }
+                        slideMenu.classList.remove('open');
+                        break;
+
+                    case 'developer':
+                        // Switch to developer mode
+                        if (typeof showDeveloperMode === 'function') {
+                            showDeveloperMode();
+                            slideMenu.classList.remove('open');
+                        }
+                        break;
+                        
+                    case 'account':
+                        // Show account modal
+                        const accountModal = document.getElementById('account-modal');
+                        if (accountModal) {
+                            accountModal.style.display = 'flex';
+                            slideMenu.classList.remove('open');
+                            updateAccountModal();
+                        }
+                        break;
+                        
+                    case 'profile':
+                        // Show profile modal
+                        if (profileModal) {
+                            profileModal.style.display = 'flex';
+                            slideMenu.classList.remove('open');
+                            updateProfileModal();
+                        }
+                        break;
+                        
+                    case 'home':
+                    case 'back-to-menu':
+                        // Switch mode based on auth status
+                        if (typeof showStartupMenu === 'function') {
+                            showStartupMenu(); // This now redirects based on auth
+                            slideMenu.classList.remove('open');
+                        }
+                        break;
+                }
+            });
+        }
+        
+        // Profile modal close
+        modalCloseButton?.addEventListener('click', () => {
+            profileModal.style.display = 'none';
+        });
+        
+        // Close modal when clicking outside
+        window.addEventListener('click', (event) => {
+            if (event.target === profileModal) {
+                profileModal.style.display = 'none';
+            }
+            if (event.target === accountModal) {
+                accountModal.style.display = 'none';
+            }
+        });
+        
+        // Account modal close button
+        accountModalCloseButton?.addEventListener('click', () => {
+            accountModal.style.display = 'none';
+        });
+        
+        // Logout button in account modal
+        const logoutButtonModal = document.getElementById('logout-button-modal');
+        logoutButtonModal?.addEventListener('click', async () => {
+            // Call existing logout functionality
+            try {
+                await signOut();
+            } finally {
+                accountModal.style.display = 'none';
+            }
+        });
+        
+        // Refresh button in account modal
+        const refreshAccountButton = document.getElementById('refresh-account-button');
+        refreshAccountButton?.addEventListener('click', async () => {
+            const button = refreshAccountButton;
+            const originalText = button.querySelector('span').textContent;
+            
+            try {
+                // Disable button and show loading state
+                button.disabled = true;
+                button.classList.add('refreshing');
+                button.querySelector('span').textContent = 'Refreshing...';
+                
+                // Refresh user data from backend
+                if (window.userProfileManager) {
+                    await window.userProfileManager.refreshUserData();
+                    console.log('✅ Account data refreshed successfully');
+                    
+                    // Update the account modal display
+                    updateAccountModal();
+                    
+                    // Also update other UI elements
+                    window.userProfileManager.updateUserInterface();
+                    
+                    // Show success feedback
+                    button.querySelector('span').textContent = 'Refreshed!';
+                    setTimeout(() => {
+                        button.querySelector('span').textContent = originalText;
+                    }, 1500);
+                } else {
+                    throw new Error('User profile manager not initialized');
+                }
+                
+            } catch (error) {
+                console.error('❌ Failed to refresh account data:', error);
+                button.querySelector('span').textContent = 'Error';
+                
+                // Show error message
+                console.error('Failed to refresh account data. Please try again.');
+                
+                setTimeout(() => {
+                    button.querySelector('span').textContent = originalText;
+                }, 2000);
+                
+            } finally {
+                // Re-enable button and remove loading state
+                button.disabled = false;
+                button.classList.remove('refreshing');
+            }
+        });
+    }
+    
+    // Update account modal with user data
+    function updateAccountModal() {
+        const userData = userProfileManager.getUserData();
+        const subscriptionData = userProfileManager.getSubscriptionData();
+
+        if (userData && userData.email) {
+            // Update avatar text
+            const avatarText = document.getElementById('user-avatar-text-modal');
+            if (avatarText) {
+                const initials = userData.name ? userData.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U';
+                avatarText.textContent = initials;
+            }
+            
+            // Update email
+            const emailElement = document.getElementById('user-email-modal');
+            if (emailElement) {
+                emailElement.textContent = userData.email;
+            }
+
+            // Update credits
+            const creditsEl = document.getElementById('user-credits-modal');
+            if (creditsEl) {
+                const credits = typeof userData.credits === 'number' ? userData.credits : getUserCredits();
+                creditsEl.textContent = credits != null ? credits.toFixed(1) : '--';
+            }
+
+            // Update subscription type
+            const subEl = document.getElementById('user-subscription-modal');
+            if (subEl) {
+                const status = subscriptionData?.status || (userProfileManager.hasActiveSubscription() ? 'active' : 'free');
+                subEl.textContent = status;
+            }
+        }
+    }
+    
+    // Update profile modal with user data
+    function updateProfileModal() {
+        const userData = userProfileManager.getUserData();
+        
+        if (userData && userData.email) {
+            // Update avatar
+            const profileAvatar = document.getElementById('profile-user-avatar');
+            const profileInitials = document.getElementById('profile-user-initials');
+            
+            if (userData.picture) {
+                profileAvatar.src = userData.picture;
+                profileAvatar.style.display = 'block';
+                profileInitials.style.display = 'none';
+            } else {
+                profileAvatar.style.display = 'none';
+                profileInitials.style.display = 'flex';
+                profileInitials.textContent = userData.name.split(' ').map(n => n[0]).join('').toUpperCase();
+            }
+            
+            // Update user details
+            document.getElementById('profile-user-name').textContent = userData.name;
+            document.getElementById('profile-user-email').textContent = userData.email;
+        }
+        
+        // Handle sign out button
+        const profileSignOutButton = document.getElementById('profile-sign-out-button');
+        if (profileSignOutButton) {
+            profileSignOutButton.onclick = () => {
+                handleSignOut();
+                document.getElementById('profile-modal').style.display = 'none';
+            };
+        }
+    }
+    
+    // Update footer display (hide when developer mode is active)
+    function updateFooterDisplay() {
+        const footer = document.querySelector('.fixed-footer');
+        const appBody = document.getElementById('app-body');
+        const clientContent = document.querySelector('.client-content');
+        
+        if (footer) {
+            // Check if developer mode (app-body) is visible
+            const isDeveloperMode = appBody && appBody.style.display !== 'none';
+            
+            if (isDeveloperMode) {
+                // Hide footer in developer mode
+                footer.style.display = 'none';
+                // Adjust content area to use full height
+                if (clientContent) {
+                    clientContent.style.bottom = '0';
+                }
+            } else {
+                // Show footer in client mode and other views
+                footer.style.display = 'block';
+                // Reset content area to account for footer
+                if (clientContent) {
+                    clientContent.style.bottom = '32px'; // var(--footer-height)
+                }
+            }
+        }
+    }
+    
+    // Make functions globally available
+    window.updateFooterDisplay = updateFooterDisplay;
+    window.handleGoogleSignIn = handleGoogleSignIn;
+    window.showAuthentication = showAuthentication;
+    window.showAccessCode = showAccessCode;
+    
+    // Initialize header menu and footer
+    initializeHeaderMenu();
+    updateFooterDisplay();
+    
+    // Setup Google Sign-In button if authentication view is shown
+    setupGoogleSignInButton();
+
+    // ... (rest of your Office.onReady, e.g., Promise.all)
+
+// Store the handler function reference to properly remove it later
+let googleSignInHandler = null;
+let googleSignInButtonSetup = false;
+
+// Google Sign-In handler - defined globally so it's available immediately
+function handleGoogleSignIn() {
+  console.log("Google Sign-In clicked");
+  
+  // Import CONFIG if not available
+  const config = window.CONFIG || { isDevelopment: false };
+  
+  // Build Google OAuth URL
+  const buildGoogleAuthUrl = () => {
+    const clientId = '169155377864-2vru0t1ohv6afpi7nvr1lq7ri3vqt9qp.apps.googleusercontent.com';
+    const redirectUri = window.location.origin + '/auth/google/callback.html';
+    const scope = 'openid profile email';
+    
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      `client_id=${clientId}` +
+      `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+      `&response_type=token` +
+      `&scope=${encodeURIComponent(scope)}` +
+      `&prompt=select_account`;
+    
+    return authUrl;
+  };
+  
+  // Fallback function for when Office Dialog API is not available
+  const handleGoogleSignInFallback = () => {
+    const authUrl = buildGoogleAuthUrl();
+    const authWindow = window.open(authUrl, 'google-auth', 'width=500,height=600');
+    
+    // Poll for completion
+    const pollTimer = setInterval(() => {
+      try {
+        if (authWindow.closed) {
+          clearInterval(pollTimer);
+          console.log("Auth window closed");
+          // Check if we got a token
+          setTimeout(() => {
+            const token = localStorage.getItem('google_access_token');
+            if (token) {
+              console.log("Google authentication successful!");
+              // Refresh the UI or redirect
+              if (window.showClientMode) {
+                window.showClientMode();
+              } else {
+                window.location.reload();
+              }
+            }
+          }, 1000);
+        }
+      } catch (e) {
+        // Cross-origin error, window is still open
+      }
+    }, 1000);
+  };
+  
+  // Use Office Dialog API if available
+  if (typeof Office !== 'undefined' && Office.context && Office.context.ui && Office.context.ui.displayDialogAsync) {
+    const authUrl = buildGoogleAuthUrl();
+    
+    Office.context.ui.displayDialogAsync(authUrl, {
+      height: 60,
+      width: 30,
+      displayInIframe: false
+    }, (asyncResult) => {
+      if (asyncResult.status === Office.AsyncResultStatus.Failed) {
+        console.error("Failed to open authentication dialog:", asyncResult.error);
+        // Fallback to external window
+        handleGoogleSignInFallback();
+      } else {
+        const dialog = asyncResult.value;
+        
+        dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
+          console.log("Message received from dialog:", arg.message);
+          try {
+            const message = JSON.parse(arg.message);
+            if (message.status === 'success' && message.token) {
+              // Store the token
+              localStorage.setItem('google_access_token', message.token);
+              // Close the dialog
+              dialog.close();
+              // Proceed with authentication
+              if (window.handleGoogleCallback) {
+                window.handleGoogleCallback({ credential: message.token });
+              } else {
+                window.location.reload();
+              }
+            }
+          } catch (e) {
+            console.error("Error parsing dialog message:", e);
+          }
+        });
+        
+        dialog.addEventHandler(Office.EventType.DialogEventReceived, (arg) => {
+          console.log("Dialog event received:", arg);
+          if (arg.error === 12006) {
+            // Dialog was closed by user
+            console.log("Authentication dialog closed by user");
+          }
+        });
+      }
+    });
+  } else {
+    console.log("Office Dialog API not available, using fallback");
+    handleGoogleSignInFallback();
+  }
+}
+
+// Make it globally available immediately
+window.handleGoogleSignIn = handleGoogleSignIn;
+
+// Helper function to ensure Google Sign-In button is properly set up
+function setupGoogleSignInButton() {
+  // Prevent multiple setups
+  if (googleSignInButtonSetup) {
+    console.log('⚠️ Google Sign-In button already set up, skipping...');
+    return;
+  }
+  
+  const googleSignInButton = document.getElementById('google-signin-button');
+  if (googleSignInButton) {
+    console.log('🔧 Setting up Google Sign-In button');
+    
+    // Remove any existing handlers
+    googleSignInButton.onclick = null;
+    if (googleSignInHandler) {
+      googleSignInButton.removeEventListener('click', googleSignInHandler);
+      googleSignInHandler = null;
+    }
+    
+    // Create new handler
+    googleSignInHandler = (e) => {
+      e.preventDefault();
+      console.log('🖱️ Google Sign-In button clicked!');
+      if (window.handleGoogleSignIn) {
+        window.handleGoogleSignIn();
+      } else {
+        console.error('❌ handleGoogleSignIn function not found!');
+      }
+    };
+    
+    // Add new handler
+    googleSignInButton.addEventListener('click', googleSignInHandler);
+    googleSignInButtonSetup = true;
+    console.log('✅ Google Sign-In button event listener added');
+  } else {
+    console.log('⏳ Google Sign-In button not found yet');
+  }
+}
+
+// >>> ADDED: Function definition moved here
+async function insertResponseToEditor() {
+    console.log("[insertResponseToEditor] Function called.");
+    if (!lastResponse) {
+        console.log("[insertResponseToEditor] Exiting: lastResponse is null or empty.");
+        showError('No response to insert');
+        return;
+    }
+
+    console.log("[insertResponseToEditor] lastResponse:", lastResponse);
+
+    const codesTextarea = document.getElementById('codes-textarea');
+    if (!codesTextarea) {
+        console.error("[insertResponseToEditor] Exiting: Could not find codes-textarea.");
+        showError('Could not find the code editor textarea');
+        return;
+    }
+
+    console.log("[insertResponseToEditor] Found codesTextarea.");
+
+    try {
+        // Check for valid cursor position FIRST
+        if (lastEditorCursorPosition === null) {
+             console.log("[insertResponseToEditor] Exiting: lastEditorCursorPosition is null.");
+             showError("Please click in the code editor first to set the insertion point.");
+             return;
+        }
+
+        let responseText = "";
+        // >>> MODIFIED: Extract <...> strings and ensure each is on a new line
+        let codeStringsToInsert = [];
+        if (Array.isArray(lastResponse)) {
+            // Filter out empty strings just in case
+            codeStringsToInsert = lastResponse.filter(item => typeof item === 'string' && item.trim().length > 0);
+        } else if (typeof lastResponse === 'string') {
+            // First, replace any "><" patterns with ">\n<" to ensure they're on separate lines
+            let processedResponse = lastResponse.replace(/></g, '>\n<');
+            
+            const matches = processedResponse.match(/<[^>]+>/g); // Find all <...> patterns
+            if (matches) {
+                codeStringsToInsert = matches;
+            } else if (lastResponse.trim().length > 0) {
+                 // Fallback: If it's a string but no <...> found, maybe insert the whole string?
+                 // For now, let's only insert if <...> are found based on the requirement.
+                 console.log("[insertResponseToEditor] lastResponse is a string but no <...> tags found.");
+            }
+        } else {
+            // Log if the format is unexpected
+             console.warn("[insertResponseToEditor] lastResponse is not an array or string:", lastResponse);
+        }
+
+        if (codeStringsToInsert.length === 0) {
+            showMessage("No code strings found in the response to insert.");
+            console.log("[insertResponseToEditor] No <...> strings extracted from lastResponse.");
+            return;
+        }
+
+        // Join the extracted strings, each on its own line
+        // Ensure no empty lines between code strings
+        responseText = codeStringsToInsert.join('\n');
+        
+        // Also ensure that if there are multiple bracket sets on the same line, they get separated
+        responseText = responseText.replace(/></g, '>\n<');
+        // <<< END MODIFIED BLOCK
+
+        if (!responseText) {
+            showMessage("Response is empty, nothing to insert.");
+            return;
+        }
+
+        const currentText = codesTextarea.value;
+        // Define insertionPoint using the validated cursor position
+        const insertionPoint = lastEditorCursorPosition;
+
+        // >>> ADDED: Check for <TAB; prefix if missing, but also check for <ADDCODES> and <TAB>
+        const tabPrefix = '<TAB; ';
+        const addCodesTag = '<ADDCODES>';
+        const tabTag = '<TAB>';
+        const defaultTabString = '<TAB; label1="Generic";>';
+        let addDefaultTab = false;
+        
+        // Only add default tab if none of these tags are present in either current text or response
+        const hasTabPrefix = currentText.includes(tabPrefix) || responseText.includes(tabPrefix);
+        const hasAddCodes = currentText.includes(addCodesTag) || responseText.includes(addCodesTag);
+        const hasTabTag = currentText.includes(tabTag) || responseText.includes(tabTag);
+        
+        if (!hasTabPrefix && !hasAddCodes && !hasTabTag) {
+            addDefaultTab = true;
+            console.log("[insertResponseToEditor] No <TAB;, <ADDCODES>, or <TAB> tags found. Prepending default tab.");
+        } else {
+            console.log("[insertResponseToEditor] Found existing tags - not adding default tab.");
+        }
+        // <<< END ADDED CHECK
+
+        // Validate insertionPoint is within bounds (safety check)
+        if (insertionPoint < 0 || insertionPoint > currentText.length) {
+             console.error(`[insertResponseToEditor] Invalid insertionPoint: ${insertionPoint}, currentText length: ${currentText.length}`);
+             showError("Invalid cursor position detected. Please click in the editor again.");
+             lastEditorCursorPosition = null; // Reset invalid position
+             return;
+        }
+
+        const textBefore = currentText.substring(0, insertionPoint);
+        const textAfter = currentText.substring(insertionPoint);
+
+        // Insert the response, adding a newline before if inserting mid-text and not at the start or after a newline
+        let textToInsert = (addDefaultTab ? defaultTabString + '\n' : '') + responseText; // Prepend default tab if needed
+        if (insertionPoint > 0 && textBefore.charAt(textBefore.length - 1) !== '\n') {
+             textToInsert = '\n' + textToInsert; // Add leading newline to the combined string (tab + response)
+        }
+        // Add a newline after if not inserting at the very end or before an existing newline
+        if (insertionPoint < currentText.length && textAfter.charAt(0) !== '\n') {
+             textToInsert += '\n';
+        } else if (insertionPoint === currentText.length && currentText.length > 0 && textBefore.charAt(textBefore.length - 1) !== '\n') {
+             // Special case: inserting exactly at the end, ensure newline separation from previous content
+             textToInsert = '\n' + textToInsert;
+        }
+
+
+        codesTextarea.value = textBefore + textToInsert + textAfter;
+
+        // Update the last cursor position to be after the inserted text
+        const newCursorPos = insertionPoint + textToInsert.length;
+        codesTextarea.focus();
+        codesTextarea.setSelectionRange(newCursorPos, newCursorPos);
+        lastEditorCursorPosition = newCursorPos; // Update tracked position
+        
+        // Trigger input event to ensure autopopulate continues working
+        const inputEvent = new Event('input', { bubbles: true, cancelable: true });
+        codesTextarea.dispatchEvent(inputEvent);
+
+        showMessage("Response inserted into editor.");
+        console.log(`Response inserted at position: ${insertionPoint}`);
+        
+        // Quote highlighting disabled to preserve line breaks
+        // applyQuoteHighlighting();
+
+    } catch (error) {
+        console.error("Error inserting response to editor:", error);
+        showError(`Failed to insert response: ${error.message}`);
+    }
+}
+
+// Function to get selected text from the code editor
+function getSelectedTextFromEditor() {
+    const codesTextarea = document.getElementById('codes-textarea');
+    if (!codesTextarea) {
+        return '';
+    }
+    
+    const start = codesTextarea.selectionStart;
+    const end = codesTextarea.selectionEnd;
+    
+    if (start === end) {
+        // No text selected, return empty string
+        return '';
+    }
+    
+    return codesTextarea.value.substring(start, end);
+}
+
+// Function to remove TAB codes from text
+function removeTABCodes(text) {
+    if (!text || typeof text !== 'string') {
+        return text;
+    }
+    
+    // Remove any <> brackets that contain the word "TAB"
+    const tabCodeRegex = /<[^>]*TAB[^>]*>/g;
+    const cleanedText = text.replace(tabCodeRegex, '');
+    
+    console.log("[removeTABCodes] Original text length:", text.length);
+    console.log("[removeTABCodes] Cleaned text length:", cleanedText.length);
+    console.log("[removeTABCodes] TAB codes removed:", text.length - cleanedText.length > 0);
+    
+    return cleanedText;
+}
+
+// Function to remove commas from text
+function removeCommas(text) {
+    if (!text || typeof text !== 'string') {
+        return text;
+    }
+    
+    const cleanedText = text.replace(/,/g, '');
+    
+    console.log("[removeCommas] Original text length:", text.length);
+    console.log("[removeCommas] Cleaned text length:", cleanedText.length);
+    console.log("[removeCommas] Commas removed:", text.length - cleanedText.length > 0);
+    
+    return cleanedText;
+}
+
+// Function to show training data modal
+async function addToTrainingDataQueue() {
+    try {
+        // Use the first user input (conversation starter) for training data
+        const userPrompt = firstUserInput || '';
+        
+        // Get AI response - convert array to string if needed
+        let aiResponse = '';
+        if (Array.isArray(lastResponse)) {
+            aiResponse = lastResponse.join('\n');
+        } else if (typeof lastResponse === 'string') {
+            aiResponse = lastResponse;
+        }
+        
+        // Show the training data modal
+        showTrainingDataModal(userPrompt, aiResponse);
+        
+    } catch (error) {
+        console.error("Error opening training data modal:", error);
+        showError(`Error opening training data dialog: ${error.message}`);
+    }
+}
+
+// Function to show the training data modal
+function showTrainingDataModal(userPrompt = '', aiResponse = '') {
+    const modal = document.getElementById('training-data-modal');
+    const userInputField = document.getElementById('training-user-input');
+    const aiResponseField = document.getElementById('training-ai-response');
+    
+    if (!modal || !userInputField || !aiResponseField) {
+        showError('Training data modal elements not found');
+        return;
+    }
+    
+    // Use persisted values if they exist, otherwise use provided parameters
+    const finalUserPrompt = persistedTrainingUserInput !== null ? persistedTrainingUserInput : userPrompt;
+    const finalAiResponse = persistedTrainingAiResponse !== null ? persistedTrainingAiResponse : aiResponse;
+    
+    // Populate the fields
+    userInputField.value = finalUserPrompt;
+    aiResponseField.value = finalAiResponse;
+    
+    console.log("[showTrainingDataModal] Using persisted values:", {
+        userInputPersisted: persistedTrainingUserInput !== null,
+        aiResponsePersisted: persistedTrainingAiResponse !== null
+    });
+    
+    // Initialize find/replace functionality for training modal
+    resetTrainingModalSearchState();
+    
+    // Ensure paste functionality works by adding explicit event handlers
+    const enablePasteForElement = (element) => {
+        // Remove any existing paste handlers to avoid duplicates
+        element.removeEventListener('paste', handlePasteEvent);
+        
+        // Add paste event handler
+        element.addEventListener('paste', handlePasteEvent);
+        
+        // Also ensure the element is properly focusable
+        element.setAttribute('tabindex', '0');
+        
+        // Add context menu support (right-click paste)
+        element.addEventListener('contextmenu', (e) => {
+            // Allow default context menu behavior
+            e.stopPropagation();
+        });
+        
+        // Add keyboard shortcut support
+        element.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+                // Allow default paste behavior
+                e.stopPropagation();
+            }
+        });
+    };
+    
+    // Enable paste for both textarea elements
+    enablePasteForElement(userInputField);
+    enablePasteForElement(aiResponseField);
+    
+    // Show the modal
+    modal.style.display = 'block';
+    
+    // Focus the first field to ensure proper initialization
+    setTimeout(() => {
+        userInputField.focus();
+        
+        // Debug logging to help troubleshoot paste issues
+        console.log('Training data modal opened successfully');
+        console.log('User input field can focus:', document.activeElement === userInputField);
+        console.log('User input field readonly:', userInputField.readOnly);
+        console.log('User input field disabled:', userInputField.disabled);
+        console.log('AI response field readonly:', aiResponseField.readOnly);
+        console.log('AI response field disabled:', aiResponseField.disabled);
+        
+        // Test if paste events can be triggered
+        try {
+            const testEvent = new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                clipboardData: new DataTransfer()
+            });
+            console.log('Clipboard event creation test passed');
+        } catch (e) {
+            console.warn('Clipboard event creation test failed:', e.message);
+        }
+    }, 100);
+}
+
+// Helper function to handle paste events
+function handlePasteEvent(e) {
+    try {
+        // Allow the default paste behavior
+        console.log('Paste event detected in training data field');
+        
+        // For debugging - log what's being pasted (if accessible)
+        if (e.clipboardData && e.clipboardData.getData) {
+            try {
+                const pastedText = e.clipboardData.getData('text');
+                console.log('Pasted text length:', pastedText.length);
+            } catch (clipboardError) {
+                console.log('Could not access clipboard data for logging');
+            }
+        }
+        
+        // Don't prevent default - let the browser handle the paste
+        return true;
+    } catch (error) {
+        console.error('Error in paste handler:', error);
+        // Still allow the paste to proceed
+        return true;
+    }
+}
+
+// Function to hide the training data modal
+function hideTrainingDataModal() {
+    const modal = document.getElementById('training-data-modal');
+    const userInputField = document.getElementById('training-user-input');
+    const aiResponseField = document.getElementById('training-ai-response');
+    
+    // Save current field values before hiding
+    if (userInputField && aiResponseField) {
+        persistedTrainingUserInput = userInputField.value;
+        persistedTrainingAiResponse = aiResponseField.value;
+        console.log("[hideTrainingDataModal] Saved field values for persistence");
+    }
+    
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Function to save training data from modal
+async function saveTrainingDataFromModal() {
+    try {
+        const userInputField = document.getElementById('training-user-input');
+        const aiResponseField = document.getElementById('training-ai-response');
+        
+        if (!userInputField || !aiResponseField) {
+            showError('Training data input fields not found');
+            return;
+        }
+        
+        const userPrompt = userInputField.value.trim();
+        const aiResponse = aiResponseField.value.trim();
+        
+        // Validate inputs - require at least one field to be filled
+        if (!userPrompt && !aiResponse) {
+            showError("Please enter either a client message or AI response before saving.");
+            return;
+        }
+        
+        const trainingEntry = {
+            prompt: userPrompt,
+            selectedCode: aiResponse
+        };
+        
+        console.log("[saveTrainingDataFromModal] Created training entry:", trainingEntry);
+        
+        // Load existing training queue and add new entry
+        let trainingQueue = [];
+        try {
+            const existingQueue = localStorage.getItem('trainingDataQueue');
+            if (existingQueue) {
+                const parsed = JSON.parse(existingQueue);
+                // Only use existing data if it's in the new format (no timestamp, hasPrompt, etc.)
+                if (parsed.length > 0 && !parsed[0].timestamp && parsed[0].hasPrompt === undefined) {
+                    trainingQueue = parsed;
+                    console.log("[saveTrainingDataFromModal] Loaded existing queue with", trainingQueue.length, "entries");
+                } else {
+                    console.log("[saveTrainingDataFromModal] Found old format data, starting fresh");
+                    trainingQueue = [];
+                }
+            } else {
+                console.log("[saveTrainingDataFromModal] No existing queue found, starting fresh");
+            }
+        } catch (error) {
+            console.warn("Error loading existing training queue:", error);
+            trainingQueue = [];
+        }
+        
+        // Add new entry to queue
+        trainingQueue.push(trainingEntry);
+        console.log("[saveTrainingDataFromModal] Queue now has", trainingQueue.length, "entries");
+        
+        // Save back to localStorage
+        localStorage.setItem('trainingDataQueue', JSON.stringify(trainingQueue));
+        
+        // Create TXT content
+        const txtContent = convertTrainingQueueToTXT(trainingQueue);
+        console.log("[saveTrainingDataFromModal] Generated TXT content:", txtContent);
+        
+        // Save TXT file (using browser download)
+        downloadTXTFile(txtContent, `training_data_queue.txt`);
+        
+        // Show success message
+        showMessage(`Training data added to queue! Entry ${trainingQueue.length} saved. TXT file downloaded.`);
+        
+        // Clear persisted values since data was successfully saved
+        persistedTrainingUserInput = null;
+        persistedTrainingAiResponse = null;
+        
+        // Hide the modal
+        hideTrainingDataModal();
+        
+        console.log("Training data entry added:", trainingEntry);
+        
+    } catch (error) {
+        console.error("Error saving training data:", error);
+        showError(`Error saving training data: ${error.message}`);
+    }
+}
+
+// Function to convert training queue to TXT format
+function convertTrainingQueueToTXT(trainingQueue) {
+    if (!trainingQueue || trainingQueue.length === 0) {
+        return ''; // Return empty string if no data
+    }
+    
+    let txt = '';
+    
+    // Add each entry - only prompt and selected code, no quotes
+    trainingQueue.forEach(entry => {
+        // Don't escape or quote the fields, just use them as-is
+        const prompt = entry.prompt || '';
+        // Replace newlines in code with spaces to keep it on one line
+        const code = (entry.selectedCode || '').replace(/\n/g, ' ').replace(/\r/g, ' ');
+        
+        txt += `${prompt}^^^${code}@\n`; // Added @ symbol before newline
+    });
+    
+    return txt;
+}
+
+
+
+// Function to download TXT file
+function downloadTXTFile(txtContent, filename) {
+    try {
+        // Create blob with TXT content
+        const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8;' });
+        
+        // Create download link
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        
+        // Add to document, click, and remove
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Clean up the URL object
+        URL.revokeObjectURL(url);
+        
+        console.log(`TXT file "${filename}" download initiated`);
+        
+    } catch (error) {
+        console.error("Error downloading TXT file:", error);
+        // Fallback: log the TXT content to console
+        console.log("TXT Content (download failed):", txtContent);
+        showError("Could not download TXT file, but data was saved to localStorage. Check console for TXT content.");
+    }
+}
+
+// Function to clear old training data (for debugging)
+function clearTrainingDataQueue() {
+    try {
+        localStorage.removeItem('trainingDataQueue');
+        console.log("Training data queue cleared from localStorage");
+        showMessage("Training data queue cleared successfully!");
+    } catch (error) {
+        console.error("Error clearing training data queue:", error);
+        showError(`Error clearing training data: ${error.message}`);
+    }
+}
+
+// Make it globally accessible for debugging
+window.clearTrainingDataQueue = clearTrainingDataQueue;
+
+// >>> ADDED: Microsoft Authentication System
+let msalInstance;
+let currentUser = null;
+
+/**
+ * Initialize Microsoft Authentication Library (MSAL)
+ */
+function initializeMSAL() {
+    try {
+        console.log('Initializing MSAL...');
+        
+        // Check if MSAL library is loaded
+        if (typeof msal === 'undefined') {
+            console.error('MSAL library not loaded - authentication will not work');
+            showError('Authentication library not loaded. Please refresh the page.');
+            return false;
+        }
+        
+        console.log('MSAL library found, checking configuration...');
+        
+        // Validate configuration
+        if (!CONFIG || !CONFIG.authentication || !CONFIG.authentication.msalConfig) {
+            console.error('MSAL configuration not found');
+            showError('Authentication configuration missing');
+            return false;
+        }
+        
+        const config = CONFIG.authentication.msalConfig;
+        console.log('MSAL config:', {
+            clientId: config.auth.clientId,
+            authority: config.auth.authority,
+            redirectUri: config.auth.redirectUri
+        });
+        
+        // Check for placeholder values
+        if (CONFIG.authentication.isDevelopmentPlaceholder()) {
+            console.warn('MSAL using placeholder client ID - authentication will not work');
+            
+            const isDev = process.env.NODE_ENV === 'development';
+            const setupMessage = isDev 
+                ? 'Microsoft authentication is not configured. Please follow the setup guide in MICROSOFT_AUTH_SETUP.md to create an Azure app registration.'
+                : 'Microsoft authentication is not configured for production. Please update the client ID in config.js';
+            
+            showError(setupMessage);
+            return false;
+        }
+        
+        // Create MSAL instance
+        console.log('Creating MSAL instance...');
+        msalInstance = new msal.PublicClientApplication(config);
+        
+        // Handle redirect response
+        msalInstance.handleRedirectPromise()
+            .then(handleAuthResponse)
+            .catch(error => {
+                console.error('Error handling redirect response:', error);
+                showError('Authentication redirect error: ' + error.message);
+            });
+
+        // Check if user is already signed in
+        checkAuthState();
+        
+        console.log('MSAL initialized successfully');
+        return true;
+        
+    } catch (error) {
+        console.error('Failed to initialize MSAL:', error);
+        showError('Authentication system initialization failed: ' + error.message);
+        msalInstance = null; // Ensure it's null on failure
+        return false;
+    }
+}
+
+/**
+ * Handle authentication response
+ */
+function handleAuthResponse(response) {
+    if (response && response.account) {
+        console.log('Authentication successful:', response);
+        currentUser = response.account;
+        updateAuthUI(true);
+        getUserProfile();
+    } else {
+        console.log('No authentication response or account');
+        updateAuthUI(false);
+    }
+}
+
+/**
+ * Check current authentication state
+ */
+function checkAuthState() {
+    try {
+        if (!msalInstance) {
+            console.log('MSAL not initialized - cannot check auth state');
+            updateAuthUI(false);
+            return;
+        }
+        
+        const currentAccounts = msalInstance.getAllAccounts();
+        if (currentAccounts.length > 0) {
+            currentUser = currentAccounts[0];
+            updateAuthUI(true);
+            getUserProfile();
+            console.log('User already authenticated:', currentUser);
+        } else {
+            updateAuthUI(false);
+            console.log('No authenticated user found');
+        }
+    } catch (error) {
+        console.error('Error checking auth state:', error);
+        updateAuthUI(false);
+    }
+}
+
+/**
+ * Sign in user
+ */
+async function signIn() {
+    try {
+        console.log('Initiating sign-in...');
+        
+        // Check if Google authentication is already active
+        const googleUser = sessionStorage.getItem('googleUser');
+        if (googleUser) {
+            console.log('User already authenticated with Google - skipping MSAL sign-in');
+            showMessage('You are already signed in with Google!');
+            return;
+        }
+        
+        // Check if MSAL is initialized
+        if (!msalInstance) {
+            console.error('MSAL not initialized - cannot sign in');
+            showError('Microsoft authentication not available. Please use Google Sign-In from the Authentication menu.');
+            return;
+        }
+        
+        // Check if configuration is valid
+        if (!CONFIG.authentication.loginRequest) {
+            console.error('Login request configuration missing');
+            showError('Authentication configuration incomplete');
+            return;
+        }
+        
+        console.log('Starting login popup...');
+        const response = await msalInstance.loginPopup(CONFIG.authentication.loginRequest);
+        console.log('Sign-in successful:', response);
+        
+        if (response && response.account) {
+            currentUser = response.account;
+            updateAuthUI(true);
+            getUserProfile();
+            updateSignedInStatus();
+            showMessage('Successfully signed in to Microsoft!');
+        } else {
+            console.error('No account in sign-in response');
+            showError('Sign-in completed but no account information received');
+        }
+        
+    } catch (error) {
+        console.error('Sign-in failed:', error);
+        
+        if (error.errorCode === 'popup_window_error' || error.errorCode === 'user_cancelled') {
+            showError('Sign-in was cancelled or blocked. Please allow popups and try again.');
+        } else if (error.errorCode === 'interaction_in_progress') {
+            showError('Another sign-in is already in progress. Please wait and try again.');
+        } else if (error.errorCode === 'invalid_request') {
+            showError('Invalid authentication request. Please check the configuration.');
+        } else {
+            showError(`Sign-in failed: ${error.errorMessage || error.message || 'Unknown error'}`);
+        }
+    }
+}
+
+/**
+ * Sign out user
+ */
+async function signOut() {
+    try {
+        console.log('Signing out...');
+        
+        // Proactively clear local and session storage tokens before any provider-specific logout
+        try {
+            localStorage.removeItem('backend_access_token');
+            localStorage.removeItem('backend_refresh_token');
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            sessionStorage.removeItem('backend_access_token');
+            sessionStorage.removeItem('backend_refresh_token');
+            sessionStorage.removeItem('access_token');
+            sessionStorage.removeItem('refresh_token');
+        } catch (_) {}
+
+        // Check if we're using Google authentication and call the proper logout function
+        if (typeof window.handleGoogleSignOutView === 'function') {
+            console.log('Using Google logout function');
+            const result = window.handleGoogleSignOutView();
+            if (result && result.success) {
+                console.log('Google logout completed successfully');
+            }
+        }
+
+        console.log('Clearing any remaining Google session data');
+        // Fallback: Clear Google-related session state regardless
+        sessionStorage.removeItem('googleUser');
+        sessionStorage.removeItem('googleToken');
+        sessionStorage.removeItem('googleCredential');
+        sessionStorage.removeItem('authToken');
+        sessionStorage.removeItem('userInfo');
+        
+        // Only try MSAL logout if MSAL was actually initialized and used
+        try {
+            if (typeof msalInstance !== 'undefined' && msalInstance && currentUser) {
+                console.log('Attempting MSAL logout');
+                await msalInstance.logoutPopup();
+                console.log('MSAL logout completed');
+            }
+        } catch (msalError) {
+            console.log('MSAL logout not applicable or failed:', msalError.message);
+        }
+        
+        currentUser = null;
+        updateAuthUI(false);
+        updateSignedInStatus();
+        
+        // Clear in-memory user state used by UI helpers
+        if (window.userProfileManager) {
+            try {
+                window.userProfileManager.userData = null;
+                window.userProfileManager.subscriptionData = null;
+                window.updateFooterDisplay && window.updateFooterDisplay();
+            } catch (_) {}
+        }
+
+        // Redirect back to authentication view and disable auto-login
+        const authView = document.getElementById('authentication-view');
+        const clientView = document.getElementById('client-mode-view');
+        if (authView && clientView) {
+            authView.style.display = 'flex';
+            clientView.style.display = 'none';
+            console.log('Redirected to authentication view');
+        }
+
+        // Guard against automatic re-login by clearing any flags/tokens used at startup
+        try {
+            localStorage.removeItem('google_access_token');
+            localStorage.removeItem('msal_access_token');
+            localStorage.removeItem('user_api_key');
+            // Set a short-lived flag to prevent auto-login checks
+            localStorage.setItem('force_logout', '1');
+            sessionStorage.setItem('force_logout', '1');
+        } catch (_) {}
+
+        // Reinitialize authentication view handlers (Google Sign-In button)
+        try {
+            if (typeof showAuthentication === 'function') {
+                showAuthentication();
+            } else {
+                setupGoogleSignInButton();
+            }
+        } catch (error) {
+            console.error('Error setting up authentication:', error);
+        }
+        
+        console.log('Sign-out successful');
+        showMessage('Successfully signed out');
+    } catch (error) {
+        console.error('Sign-out failed:', error);
+        // Even if logout fails, clear local state
+        currentUser = null;
+        updateAuthUI(false);
+        
+        // Force clear sessionStorage even on error
+        sessionStorage.removeItem('googleUser');
+        sessionStorage.removeItem('googleToken');
+        sessionStorage.removeItem('googleCredential');
+        sessionStorage.removeItem('authToken');
+        sessionStorage.removeItem('userInfo');
+        
+        showError('Sign-out encountered an error but local session was cleared');
+    }
+}
+
+/**
+ * Get user profile from Microsoft Graph
+ */
+async function getUserProfile() {
+    try {
+        if (!currentUser) {
+            console.log('No current user for profile fetch');
+            return;
+        }
+
+        // Get access token
+        const tokenResponse = await msalInstance.acquireTokenSilent({
+            ...CONFIG.authentication.tokenRequest,
+            account: currentUser
+        });
+
+        // Fetch user profile
+        const profileResponse = await fetch(CONFIG.authentication.graphConfig.graphMeUrl, {
+            headers: {
+                'Authorization': `Bearer ${tokenResponse.accessToken}`
+            }
+        });
+
+        if (profileResponse.ok) {
+            const profile = await profileResponse.json();
+            console.log('User profile:', profile);
+            updateUserProfile(profile);
+            
+            // Initialize user data from backend after successful sign-in
+            try {
+                await initializeUserData();
+            } catch (error) {
+                console.warn("Failed to initialize user data after sign-in:", error);
+                forceUpdateUserDisplay();
+            }
+            
+            // Try to get user photo
+            getUserPhoto(tokenResponse.accessToken);
+        } else {
+            console.error('Failed to fetch user profile:', profileResponse.status);
+        }
+    } catch (error) {
+        console.error('Error getting user profile:', error);
+        // If we can't get extended profile, just use basic account info
+        updateUserProfile({
+            displayName: currentUser.name || 'User',
+            mail: currentUser.username || '',
+            userPrincipalName: currentUser.username || ''
+        });
+    }
+}
+
+/**
+ * Get user photo from Microsoft Graph
+ */
+async function getUserPhoto(accessToken) {
+    try {
+        const photoResponse = await fetch(CONFIG.authentication.graphConfig.graphPhotoUrl, {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+
+        if (photoResponse.ok) {
+            const photoBlob = await photoResponse.blob();
+            const photoUrl = URL.createObjectURL(photoBlob);
+            
+            const avatarImg = document.getElementById('user-avatar');
+            const initialsDiv = document.getElementById('user-initials');
+            
+            if (avatarImg) {
+                avatarImg.src = photoUrl;
+                avatarImg.style.display = 'block';
+                if (initialsDiv) {
+                    initialsDiv.style.display = 'none';
+                }
+            }
+        } else {
+            console.log('No user photo available or failed to fetch');
+        }
+    } catch (error) {
+        console.log('Error getting user photo:', error);
+        // Photo is optional, so we just log the error
+    }
+}
+
+/**
+ * Update user profile display
+ */
+function updateUserProfile(profile) {
+    const userNameElement = document.getElementById('user-name');
+    const userEmailElement = document.getElementById('user-email');
+    const userInitialsElement = document.getElementById('user-initials');
+
+    if (userNameElement) {
+        userNameElement.textContent = profile.displayName || profile.name || 'User';
+    }
+
+    if (userEmailElement) {
+        userEmailElement.textContent = profile.mail || profile.userPrincipalName || '';
+    }
+
+    if (userInitialsElement) {
+        const name = profile.displayName || profile.name || 'User';
+        const initials = name.split(' ')
+            .map(n => n.charAt(0))
+            .join('')
+            .substring(0, 2)
+            .toUpperCase();
+        userInitialsElement.textContent = initials;
+    }
+}
+
+/**
+ * Update authentication UI based on state
+ */
+function updateAuthUI(isAuthenticated) {
+    const signInButton = document.getElementById('sign-in-button');
+    const userInfo = document.getElementById('user-info');
+
+    console.log('Updating auth UI - authenticated:', isAuthenticated);
+
+    if (isAuthenticated) {
+        // User is signed in - show user info, hide sign-in button
+        if (signInButton) {
+            signInButton.style.display = 'none';
+            console.log('Sign-in button hidden - user authenticated');
+        }
+        if (userInfo) {
+            userInfo.style.display = 'flex';
+            console.log('User info shown');
+        }
+    } else {
+        // User is not signed in - show sign-in button, hide user info
+        if (signInButton) {
+            signInButton.style.display = 'flex';
+            console.log('Sign-in button shown - user not authenticated');
+        }
+        if (userInfo) {
+            userInfo.style.display = 'none';
+            console.log('User info hidden');
+        }
+        
+        // Clear user display
+        const userAvatar = document.getElementById('user-avatar');
+        const userInitials = document.getElementById('user-initials');
+        if (userAvatar) {
+            userAvatar.style.display = 'none';
+            userAvatar.src = '';
+        }
+        if (userInitials) {
+            userInitials.style.display = 'flex';
+            userInitials.textContent = '';
+        }
+    }
+}
+
+/**
+ * Authentication removed - return mock user
+ */
+function getCurrentUser() {
+    return {
+        name: 'Excel User',
+        email: 'user@excel.local',
+        picture: null,
+        source: 'mock'
+    };
+}
+
+/**
+ * Authentication removed - always return true
+ */
+function isUserAuthenticated() {
+    return true;
+}
+
+/**
+ * Test authentication setup - useful for debugging
+ */
+function testAuthSetup() {
+    console.log('=== Microsoft Authentication Setup Test ===');
+    
+    // Check MSAL library
+    console.log('1. MSAL Library:', typeof msal !== 'undefined' ? '✅ Loaded' : '❌ Not loaded');
+    
+    // Check configuration
+    const hasConfig = CONFIG && CONFIG.authentication && CONFIG.authentication.msalConfig;
+    console.log('2. Configuration:', hasConfig ? '✅ Found' : '❌ Missing');
+    
+    if (hasConfig) {
+        const config = CONFIG.authentication.msalConfig;
+        console.log('   - Client ID:', config.auth.clientId);
+        console.log('   - Authority:', config.auth.authority);
+        console.log('   - Redirect URI:', config.auth.redirectUri);
+        console.log('   - Is Placeholder:', CONFIG.authentication.isDevelopmentPlaceholder() ? '⚠️ Yes' : '✅ No');
+    }
+    
+    // Check MSAL instance
+    console.log('3. MSAL Instance:', msalInstance ? '✅ Initialized' : '❌ Not initialized');
+    
+    // Check authentication state
+    console.log('4. User Authentication:', isUserAuthenticated() ? '✅ Signed in' : '❌ Not signed in');
+    
+    if (isUserAuthenticated() && currentUser) {
+        console.log('   - User:', currentUser.name || currentUser.username);
+    }
+    
+    console.log('=== End Test ===');
+    
+    return {
+        msalLoaded: typeof msal !== 'undefined',
+        configExists: hasConfig,
+        isPlaceholder: hasConfig ? CONFIG.authentication.isDevelopmentPlaceholder() : true,
+        msalInitialized: !!msalInstance,
+        userAuthenticated: isUserAuthenticated()
+    };
+}
+
+// Make test function globally available for debugging
+window.testAuthSetup = testAuthSetup;
+
+// Test function to simulate user with 0 credits
+window.testZeroCredits = function() {
+    console.log('Testing zero credits flow...');
+    
+    // Temporarily override getUserCredits to return 0
+    const originalGetUserCredits = window.getUserCredits;
+    window.getUserCredits = function() {
+        console.log('getUserCredits called - returning 0 for test');
+        return 0;
+    };
+    
+    // Show the subscription welcome view
+    showSubscriptionWelcome();
+    
+    // Restore original function after 5 seconds
+    setTimeout(() => {
+        window.getUserCredits = originalGetUserCredits;
+        console.log('Test complete - getUserCredits restored');
+    }, 5000);
+};
+// <<< END ADDED
+
+// >>> ADDED: Voice Recording Implementation for Client Mode
+// Voice recording variables
+let mediaRecorderClient = null;
+let audioChunksClient = [];
+let recordingStartTimeClient = null;
+let recordingTimerIntervalClient = null;
+let audioContextClient = null;
+let analyserClient = null;
+let waveformCanvasClient = null;
+let waveformAnimationIdClient = null;
+let cursorPositionBeforeRecording = 0;
+
+// Initialize voice recording for client mode
+function initializeVoiceRecordingClient() {
+    // Check if getUserMedia is supported
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.warn('[Voice-Client] getUserMedia API not supported in this browser');
+        const voiceButton = document.getElementById('voice-input-client');
+        if (voiceButton) {
+            voiceButton.style.display = 'none';
+        }
+        return;
+    }
+    
+    if (!window.MediaRecorder) {
+        console.warn('[Voice-Client] MediaRecorder API not supported in this browser');
+        const voiceButton = document.getElementById('voice-input-client');
+        if (voiceButton) {
+            voiceButton.style.display = 'none';
+        }
+        return;
+    }
+    
+    // Get voice button
+    const voiceButton = document.getElementById('voice-input-client');
+    
+    // Voice button click - start recording immediately
+    if (voiceButton) {
+        voiceButton.addEventListener('click', () => {
+            console.log('[Voice-Client] Voice button clicked - switching to voice mode');
+            switchToVoiceModeClient();
+        });
+    }
+}
+
+// Switch to voice recording mode
+function switchToVoiceModeClient() {
+    const inputBar = document.querySelector('.chatgpt-input-bar');
+    const textArea = document.getElementById('user-input-client');
+    
+    if (!inputBar || !textArea) {
+        console.error('[Voice-Client] Required elements not found');
+        return;
+    }
+    
+    // Reset debug flag
+    window.waveformDebugLogged = false;
+    
+    // Store cursor position
+    cursorPositionBeforeRecording = textArea.selectionStart;
+    
+    // Create voice recording UI
+    const voiceRecordingUI = createVoiceRecordingUI();
+    
+    // Hide the input bar and show voice recording UI
+    inputBar.style.display = 'none';
+    inputBar.parentNode.insertBefore(voiceRecordingUI, inputBar);
+    
+    // Initialize waveform after a slight delay to ensure DOM is ready
+    setTimeout(() => {
+        initializeWaveformClient();
+        // Start recording immediately
+        startVoiceRecordingClient();
+    }, 50);
+}
+
+// Create voice recording UI
+function createVoiceRecordingUI() {
+    const voiceRecordingMode = document.createElement('div');
+    voiceRecordingMode.id = 'voice-recording-mode-client';
+    voiceRecordingMode.className = 'voice-recording-mode';
+    voiceRecordingMode.style.cssText = `
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 16px;
+        background: #f3f4f6;
+        border-radius: 8px;
+        margin: 0 16px 16px 16px;
+        gap: 12px;
+    `;
+    
+    voiceRecordingMode.innerHTML = `
+        <div style="flex: 1; display: flex; align-items: center; gap: 12px;">
+            <canvas id="voice-waveform-client" style="flex: 1; height: 40px; background: transparent;"></canvas>
+            <div id="voice-recording-timer-client" style="font-size: 14px; color: #6b7280; font-weight: 500;">00:00</div>
+        </div>
+        <div style="display: flex; gap: 4px; align-items: center;">
+            <button id="cancel-voice-recording-client" style="
+                padding: 4px;
+                background: transparent;
+                color: #6b7280;
+                border: none;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: color 0.2s;
+            " title="Cancel recording" 
+               onmouseover="this.style.color='#374151'" 
+               onmouseout="this.style.color='#6b7280'">
+                <svg viewBox="0 0 16 16" style="width: 14px; height: 14px;">
+                    <path d="M12 4L4 12M4 4l8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            <button id="accept-voice-recording-client" style="
+                padding: 4px;
+                background: transparent;
+                color: #6b7280;
+                border: none;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: color 0.2s;
+            " title="Done recording"
+               onmouseover="this.style.color='#374151'" 
+               onmouseout="this.style.color='#6b7280'">
+                <svg viewBox="0 0 16 16" style="width: 14px; height: 14px;">
+                    <path d="M3 8l3 3L13 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                </svg>
+            </button>
+        </div>
+    `;
+    
+    // Add event listeners
+    setTimeout(() => {
+        const cancelBtn = document.getElementById('cancel-voice-recording-client');
+        const acceptBtn = document.getElementById('accept-voice-recording-client');
+        
+        if (cancelBtn) {
+            cancelBtn.onclick = () => {
+                console.log('[Voice-Client] Cancel recording clicked');
+                switchToNormalModeClient();
+            };
+        }
+        
+        if (acceptBtn) {
+            acceptBtn.onclick = () => {
+                console.log('[Voice-Client] Accept recording clicked');
+                stopVoiceRecordingClient();
+            };
+        }
+    }, 0);
+    
+    return voiceRecordingMode;
+}
+
+// Initialize waveform canvas
+function initializeWaveformClient() {
+    waveformCanvasClient = document.getElementById('voice-waveform-client');
+    if (waveformCanvasClient) {
+        const ctx = waveformCanvasClient.getContext('2d');
+        
+        // Force a layout refresh to ensure dimensions are calculated
+        waveformCanvasClient.offsetHeight; // Force reflow
+        
+        // Set canvas size
+        const rect = waveformCanvasClient.getBoundingClientRect();
+        const width = rect.width || 300; // Fallback width
+        const height = rect.height || 40; // Fallback height
+        
+        waveformCanvasClient.width = width;
+        waveformCanvasClient.height = height;
+        
+        console.log('[Voice-Client] Canvas dimensions:', { width, height, rect });
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, waveformCanvasClient.width, waveformCanvasClient.height);
+        
+        console.log('[Voice-Client] Waveform canvas initialized');
+    } else {
+        console.error('[Voice-Client] Waveform canvas element not found');
+    }
+}
+
+// Draw waveform animation (using the same bar-style animation as dev side)
+function drawWaveformClient() {
+    if (!waveformCanvasClient || !analyserClient) {
+        console.warn('[Voice-Client] Canvas or analyser not ready');
+        return;
+    }
+    
+    const ctx = waveformCanvasClient.getContext('2d');
+    const rect = waveformCanvasClient.getBoundingClientRect();
+    const width = rect.width || waveformCanvasClient.width;
+    const height = rect.height || waveformCanvasClient.height;
+    
+    // Debug log on first frame
+    if (!window.waveformDebugLogged) {
+        console.log('[Voice-Client] Drawing waveform:', { width, height, canvas: waveformCanvasClient });
+        window.waveformDebugLogged = true;
+    }
+    
+    // Get time domain data for real-time audio visualization
+    const bufferLength = analyserClient.fftSize;
+    const dataArray = new Uint8Array(bufferLength);
+    analyserClient.getByteTimeDomainData(dataArray);
+    
+    // Clear canvas with transparent background
+    ctx.clearRect(0, 0, width, height);
+    
+    // Calculate how many bars we want to show
+    const numBars = Math.min(60, Math.floor(width / 4)); // Adjust bar count based on width
+    const barWidth = (width - (numBars - 1)) / numBars; // Account for spacing
+    
+    // Process audio data to get average values for each bar
+    const samplesPerBar = Math.floor(bufferLength / numBars);
+    
+    for (let i = 0; i < numBars; i++) {
+        let sum = 0;
+        let max = 0;
+        
+        // Calculate average amplitude for this bar's samples
+        for (let j = 0; j < samplesPerBar; j++) {
+            const sampleIndex = i * samplesPerBar + j;
+            if (sampleIndex < dataArray.length) {
+                const amplitude = Math.abs(dataArray[sampleIndex] - 128);
+                sum += amplitude;
+                max = Math.max(max, amplitude);
+            }
+        }
+        
+        // Use a combination of average and max for more dynamic visualization
+        const average = sum / samplesPerBar;
+        const value = (average * 0.7 + max * 0.3) / 128; // Weighted combination
+        
+        // Calculate bar height with minimum and maximum constraints
+        const minHeight = 3; // Minimum bar height
+        const maxHeight = height * 0.8; // Maximum bar height
+        let barHeight = value * height * 2; // Scale up for visibility
+        
+        // Apply logarithmic scaling for better visual dynamics
+        barHeight = Math.log10(1 + barHeight * 9) * (height / 2);
+        
+        // Ensure bars are within constraints
+        barHeight = Math.max(barHeight, minHeight);
+        barHeight = Math.min(barHeight, maxHeight);
+        
+        // Calculate x position with spacing
+        const x = i * (barWidth + 1);
+        
+        // Draw the bar centered vertically
+        const y = (height - barHeight) / 2;
+        
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(x, y, barWidth, barHeight);
+    }
+    
+    // Continue animation - this ensures continuous updates
+    if (mediaRecorderClient && mediaRecorderClient.state === 'recording') {
+        waveformAnimationIdClient = requestAnimationFrame(drawWaveformClient);
+    }
+}
+
+// Start voice recording
+async function startVoiceRecordingClient() {
+    try {
+        console.log('[Voice-Client] Requesting microphone access...');
+        
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                sampleRate: 44100
+            } 
+        });
+        
+        console.log('[Voice-Client] Microphone access granted');
+        
+        // Setup audio context for waveform visualization
+        audioContextClient = new (window.AudioContext || window.webkitAudioContext)();
+        analyserClient = audioContextClient.createAnalyser();
+        const source = audioContextClient.createMediaStreamSource(stream);
+        source.connect(analyserClient);
+        
+        // Configure analyser
+        analyserClient.fftSize = 1024;
+        analyserClient.smoothingTimeConstant = 0.3;
+        analyserClient.minDecibels = -90;
+        analyserClient.maxDecibels = -10;
+        
+        // Start waveform animation
+        drawWaveformClient();
+        
+        // Backup timer to ensure continuous animation (in case requestAnimationFrame fails)
+        const backupTimer = setInterval(() => {
+            if (mediaRecorderClient && mediaRecorderClient.state === 'recording' && !waveformAnimationIdClient) {
+                console.log('[Voice-Client] Restarting waveform animation via backup timer');
+                drawWaveformClient();
+            } else if (!mediaRecorderClient || mediaRecorderClient.state !== 'recording') {
+                clearInterval(backupTimer);
+            }
+        }, 100); // Check every 100ms
+        
+        // Create MediaRecorder
+        const options = { mimeType: 'audio/webm;codecs=opus' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+            options.mimeType = 'audio/webm';
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                options.mimeType = 'audio/mp4';
+            }
+        }
+        
+        mediaRecorderClient = new MediaRecorder(stream, options);
+        audioChunksClient = [];
+        
+        mediaRecorderClient.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunksClient.push(event.data);
+            }
+        };
+        
+        mediaRecorderClient.onstop = async () => {
+            console.log('[Voice-Client] Recording stopped');
+            
+            // Stop all tracks
+            stream.getTracks().forEach(track => track.stop());
+            
+            // Create audio blob
+            const audioBlob = new Blob(audioChunksClient, { type: 'audio/webm' });
+            console.log('[Voice-Client] Audio blob created, size:', audioBlob.size);
+            
+            // Show loading state
+            switchToLoadingModeClient();
+            
+            // Transcribe audio
+            await transcribeAudioClient(audioBlob);
+        };
+        
+        // Start recording
+        mediaRecorderClient.start();
+        recordingStartTimeClient = Date.now();
+        
+        // Start timer
+        updateRecordingTimerClient();
+        recordingTimerIntervalClient = setInterval(updateRecordingTimerClient, 100);
+        
+        console.log('[Voice-Client] Recording started');
+        
+    } catch (error) {
+        console.error('[Voice-Client] Error starting recording:', error);
+        showError('Failed to access microphone. Please check your permissions.');
+        switchToNormalModeClient();
+    }
+}
+
+// Update recording timer
+function updateRecordingTimerClient() {
+    if (!recordingStartTimeClient) return;
+    
+    const elapsed = Math.floor((Date.now() - recordingStartTimeClient) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = elapsed % 60;
+    
+    const timerElement = document.getElementById('voice-recording-timer-client');
+    if (timerElement) {
+        timerElement.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+}
+
+// Stop voice recording
+function stopVoiceRecordingClient() {
+    if (mediaRecorderClient && mediaRecorderClient.state === 'recording') {
+        mediaRecorderClient.stop();
+        
+        // Stop timer
+        if (recordingTimerIntervalClient) {
+            clearInterval(recordingTimerIntervalClient);
+            recordingTimerIntervalClient = null;
+        }
+        
+        // Stop waveform animation
+        if (waveformAnimationIdClient) {
+            cancelAnimationFrame(waveformAnimationIdClient);
+            waveformAnimationIdClient = null;
+        }
+    }
+}
+
+// Switch to loading mode
+function switchToLoadingModeClient() {
+    const voiceRecordingMode = document.getElementById('voice-recording-mode-client');
+    
+    if (voiceRecordingMode) {
+        voiceRecordingMode.innerHTML = `
+            <div style="display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%;">
+                <div style="
+                    width: 24px;
+                    height: 24px;
+                    border: 3px solid #e5e7eb;
+                    border-top-color: #3b82f6;
+                    border-radius: 50%;
+                    animation: spin 0.8s linear infinite;
+                "></div>
+                <span style="color: #6b7280; font-size: 14px;">Transcribing...</span>
+            </div>
+        `;
+        
+        // Add spinning animation if not already present
+        if (!document.getElementById('voice-spin-style')) {
+            const style = document.createElement('style');
+            style.id = 'voice-spin-style';
+            style.textContent = `
+                @keyframes spin {
+                    to { transform: rotate(360deg); }
+                }
+            `;
+            document.head.appendChild(style);
+        }
+    }
+}
+
+// Switch back to normal mode
+function switchToNormalModeClient() {
+    // Remove voice recording UI
+    const voiceRecordingMode = document.getElementById('voice-recording-mode-client');
+    if (voiceRecordingMode) {
+        voiceRecordingMode.remove();
+    }
+    
+    // Show input bar again
+    const inputBar = document.querySelector('.chatgpt-input-bar');
+    if (inputBar) {
+        inputBar.style.display = 'block';
+    }
+    
+    // Stop any ongoing recording
+    if (mediaRecorderClient && mediaRecorderClient.state === 'recording') {
+        mediaRecorderClient.stop();
+    }
+    
+    // Cleanup
+    cleanupVoiceRecordingClient();
+}
+
+// Cleanup voice recording resources
+function cleanupVoiceRecordingClient() {
+    if (recordingTimerIntervalClient) {
+        clearInterval(recordingTimerIntervalClient);
+        recordingTimerIntervalClient = null;
+    }
+    
+    if (waveformAnimationIdClient) {
+        cancelAnimationFrame(waveformAnimationIdClient);
+        waveformAnimationIdClient = null;
+    }
+    
+    if (audioContextClient) {
+        audioContextClient.close();
+        audioContextClient = null;
+    }
+    
+    analyserClient = null;
+    mediaRecorderClient = null;
+    audioChunksClient = [];
+    recordingStartTimeClient = null;
+}
+
+// Transcribe audio
+async function transcribeAudioClient(audioBlob) {
+    try {
+        console.log('[Voice-Client] Starting transcription...');
+        
+        // Get API key from AIcalls.js
+        const { initializeAPIKeys } = await import('./AIcalls.js');
+        const apiKeys = await initializeAPIKeys();
+        const apiKey = apiKeys.OPENAI_API_KEY;
+        
+        if (!apiKey) {
+            throw new Error('No API key available for transcription');
+        }
+        
+        // Create form data
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'recording.webm');
+        formData.append('model', 'whisper-1');
+        
+        // Make API request
+        const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: formData
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Transcription failed: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log('[Voice-Client] Transcription result:', result);
+        
+        if (result.text) {
+            // Insert transcribed text at cursor position
+            insertTranscribedTextClient(result.text);
+        }
+        
+    } catch (error) {
+        console.error('[Voice-Client] Transcription error:', error);
+        showError('Failed to transcribe audio. Please try again.');
+    } finally {
+        switchToNormalModeClient();
+    }
+}
+
+// Insert transcribed text at cursor position
+function insertTranscribedTextClient(text) {
+    const textArea = document.getElementById('user-input-client');
+    if (!textArea) return;
+    
+    // Get current text
+    const currentText = textArea.value;
+    const beforeCursor = currentText.substring(0, cursorPositionBeforeRecording);
+    const afterCursor = currentText.substring(cursorPositionBeforeRecording);
+    
+    // Insert text at cursor position
+    textArea.value = beforeCursor + text + afterCursor;
+    
+    // Set cursor position after inserted text
+    const newCursorPosition = cursorPositionBeforeRecording + text.length;
+    textArea.setSelectionRange(newCursorPosition, newCursorPosition);
+    
+    // Focus the textarea
+    textArea.focus();
+    
+    // Trigger input event for any listeners
+    textArea.dispatchEvent(new Event('input', { bubbles: true }));
+    
+    console.log('[Voice-Client] Transcribed text inserted');
+}
+
+// Add keyboard shortcuts for voice recording
+document.addEventListener('keydown', (e) => {
+    const voiceMode = document.getElementById('voice-recording-mode-client');
+    
+    if (voiceMode && voiceMode.parentNode) {
+        // ESC to cancel recording
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            switchToNormalModeClient();
+        }
+        // Enter to accept recording
+        else if (e.key === 'Enter') {
+            e.preventDefault();
+            stopVoiceRecordingClient();
+        }
+    }
+});
+// <<< END ADDED
+
+}); // End of Office.onReady
+
+
+
+
+

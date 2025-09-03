@@ -1,0 +1,171 @@
+The INDEX system is used when modeling unit economics that scale over time based on volume, where each unit follows a lifecycle pattern based on its age rather than calendar dates. This is common for businesses like restaurants, retail stores, subscription cohorts, or any asset that has a maturation curve.
+
+## WHEN TO USE INDEX SYSTEM
+
+Use INDEX when the client describes:
+- Opening/launching units over time (restaurants, stores, franchises, etc.)
+- Each unit having a performance curve based on its age/maturity
+- Scaling unit economics across a volume driver
+- Cohort-based revenue/cost patterns
+- Assets that mature or ramp up over their lifetime
+
+Examples that trigger INDEX usage:
+- "I will open 1 restaurant in January, 2 in March, then 5 per year. Each restaurant generates $1000 in month 1, $2000 in month 2, then $10,000 monthly thereafter."
+- "We'll launch new stores quarterly. Each store loses money for 6 months, then becomes profitable."
+- "New subscription cohorts have different retention curves based on how long they've been customers."
+
+## INDEX SYSTEM STRUCTURE
+
+```
+<INDEXBEGIN; driver1="[VolumeDriver]"; row1="..."; row2="Month #"; row3="Year #"; row4="Year end #">
+  [Unit economics codes for ONE unit]
+<INDEXEND; row2="Aggregate Growth Curve Items:">
+```
+
+### Key Components:
+
+1. **INDEXBEGIN Code:**
+   - `driver1` parameter MUST reference the volume driver (e.g., "V1" for # of new units)
+   - Creates special time series: Month 1, Month 2, etc. (age-based, not calendar dates)
+   - Sets up scaling framework
+
+2. **Special Rows in INDEXBEGIN:**
+   - `row1`: Contains "INDEXBEGIN" markers and "F" in Y1-Y6 columns for formulas
+   - `row2`: "Month #" - represents age of unit (Month 1 = first month of life)
+   - `row3`: "Year #" - maps months to years for annual scaling
+   - `row4`: "Year end #" - defines year-end periods for calculations
+
+3. **Unit Economics (Between INDEXBEGIN/INDEXEND):**
+   - Model performance of ONE unit across its lifecycle
+   - Use monthsr parameter for month-by-month patterns
+   - Include fincode in column (F) for items that should be aggregated
+   - Use sumif="year" or sumif="average" for annual scaling
+
+4. **INDEXEND Code:**
+   - Closes the INDEX block
+   - Creates aggregate rows that sum across all units and ages
+
+## SCALING LOGIC
+
+The system automatically creates formulas that:
+- Track each unit's age in every period
+- Apply the appropriate lifecycle value based on unit age
+- Aggregate across all units of different ages
+- Scale by the volume driver
+
+**Example Calculation:**
+- Volume: 1 restaurant opens Jan 2025, 2 open Feb 2025
+- Restaurant revenue: $1000 in month 1, $2000 in month 2
+- Jan 2025 total: $1000 (1 restaurant × $1000 month-1 revenue)  
+- Feb 2025 total: $4000 (1 restaurant × $2000 month-2 revenue + 2 restaurants × $1000 month-1 revenue)
+
+## INDEX-SPECIFIC CODE REQUIREMENTS
+
+### Use INDEX-Specific E Codes Only
+Within INDEX blocks, you MUST use special INDEX-aware code types:
+
+- **SPREADINDEX-E**: For revenue/cost items that spread across INDEX lifecycle
+- **CONSTINDEX-E**: For constant amounts that occur at specific INDEX months
+- **ENDPOINTINDEX-E**: For one-time amounts at INDEX start/end periods
+
+These codes handle the special INDEX mathematics and unit age tracking.
+
+### Month Number Inputs Only (No Calendar Dates)
+All timing parameters within INDEX must use month numbers relative to unit age:
+
+```
+✅ CORRECT INDEX Examples:
+"It begins on month 4 and ends on month 7"                   // Occurs in unit's first month
+
+❌ INCORRECT (Never Use Dates in INDEX):
+"Starting month is Jul-25"; Ending month is Dec-25"; ...>  // Calendar dates forbidden in INDEX
+```
+
+**Why Month Numbers Only:**
+- INDEX tracks unit age, not calendar time
+- Month 1 = first month of unit's life regardless of when it opens
+- Calendar dates would break the unit lifecycle mathematics
+
+## CORRECT CODE SEQUENCE
+
+1. **Volume Driver Code** (before INDEX):
+```
+<SPREAD-E; row1="V1(D)|# of New Restaurants Opened(L)|..."; monthsr1="1|0|0|1|0|0|0|0|1|0|0|0|1">
+```
+
+2. **INDEX Block**:
+```
+<INDEXBEGIN; driver1="V1"; row1="(D)|Growth Curve of One Restaurant(L)|(F)|INDEXBEGIN(C1)|INDEXBEGIN(C2)|(C3)|(C4)|(C5)|(C6)|F(Y1)|F(Y2)|F(Y3)|F(Y4)|F(Y5)|F(Y6)|"; row2="(D)|~Month #(L)|..."; row3="(D)|~Year #(L)|..."; row4="(D)|~Year end #(L)|...">
+
+<SPREADINDEX-E; sumif="year"; driver1="V1"; row1="V2(D)|Sales(L)|is: revenue(F)|..."; monthsr1="0|0|0|0|0|0|1000|2000|3000|6000|11000|12000">
+
+<INDEXEND; row2="(D)|~Aggregate Growth Curve Items:(L)|...">
+```
+
+## CRITICAL REQUIREMENTS
+
+1. **driver1 Parameter**: INDEXBEGIN must reference the volume driver
+2. **monthsr Parameter**: Use for lifecycle patterns within INDEX
+3. **sumif Parameter**: Required for annual aggregation (usually "year" or "average")
+4. **Fincode Column**: Items with fincodes in column (F) get aggregated
+5. **Y1-Y6 "F" Values**: Required in INDEXBEGIN row1 for formula generation
+6. **INDEX-SPECIFIC E CODES**: Must use special INDEX variants within INDEX blocks:
+   - Use **SPREADINDEX-E** instead of SPREAD-E
+   - Use **CONSTINDEX-E** instead of CONST-E  
+   - Use **ENDPOINTINDEX-E** instead of ENDPOINT-E
+7. **MONTH NUMBER INPUTS**: Never use calendar dates within INDEX. Use month numbers only:
+   - ✅ CORRECT: `start month is 12"` (meaning month 12 of unit lifecycle)
+   - ❌ INCORRECT: `start month is Dec-25"` (calendar dates not allowed in INDEX)
+
+## ISOLATION REQUIREMENTS (SELF-CONTAINMENT)
+
+🚨 **CRITICAL RULE**: Codestrings outside of the INDEX block CANNOT reference drivers from items inside the INDEX block. Everything must be self-contained within the INDEX system.
+
+### Why This Matters:
+- INDEX items are scaled and aggregated using special formulas
+- External references would break the scaling mathematics
+- Driver relationships must respect the INDEX boundary
+
+### Examples of Required Self-Containment:
+
+❌ **INCORRECT** - External depreciation referencing INDEX capex:
+```
+<INDEXBEGIN; driver1="V1">
+  <CONSTINDEX-E; row1="V2(D)|Capex per Restaurant(L)|...">
+<INDEXEND>
+<FAPPE-S; driver1="V2"; row1="..."> <!-- WRONG: Can't reference V2 from outside INDEX -->
+```
+
+✅ **CORRECT** - Both capex and depreciation inside INDEX:
+```
+<INDEXBEGIN; driver1="V1">
+  <CONSTINDEX-E; row1="V2(D)|Capex per Restaurant(L)|is: capex(F)|...">
+  <FAPPE-S; driver1="V2"; row1="V3(D)|Depreciation per Restaurant(L)|is: depreciation(F)|...">
+<INDEXEND>
+```
+
+### Common Scenarios Requiring Internal Placement:
+
+1. **Capex + Depreciation**: Both must be inside INDEX if capex varies by unit age
+2. **Working Capital**: If working capital scales with unit revenue, place inside INDEX
+3. **Operating Expenses**: Unit-specific opex should be modeled inside INDEX
+4. **Tax Calculations**: If taxes depend on unit-level profits, include inside INDEX
+5. **Interest Expense**: If debt is tied to unit-level capex, model inside INDEX
+
+### External Model Integration:
+
+- INDEX items with fincodes automatically aggregate to external model
+- External model sees total aggregated values, not individual unit economics
+- Use INDEXEND aggregate rows for external model references
+
+## VALIDATION CHECKLIST
+
+✓ Volume driver exists before INDEX block
+✓ INDEXBEGIN has driver1 parameter pointing to volume driver  
+✓ Unit economics use monthsr for lifecycle patterns
+✓ Revenue/cost items have fincode in column (F)
+✓ sumif parameter present on items that should aggregate annually
+✓ INDEXEND properly closes the block
+✓ **NO external codestrings reference drivers from inside INDEX**
+✓ **ALL related calculations (capex, depreciation, etc.) are inside INDEX**
+✓ **INDEX system is completely self-contained** 

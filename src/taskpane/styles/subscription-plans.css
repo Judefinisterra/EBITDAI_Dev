@@ -1,0 +1,298 @@
+/* Subscription Plans Styles - Optimized for Side Panel */
+
+#subscription-plans-view {
+    padding: 0;
+    background: #1a1a1a;
+    color: #ffffff;
+    min-height: 100vh;
+    overflow-y: auto;
+}
+
+/* Header */
+.subscription-plans-header {
+    background: linear-gradient(135deg, #2c2c2c 0%, #1a1a1a 100%);
+    padding: 16px;
+    border-bottom: 1px solid rgba(220, 38, 38, 0.3);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.back-button {
+    background: transparent;
+    border: none;
+    color: #9ca3af;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 8px;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: color 0.2s;
+}
+
+.back-button:hover {
+    color: #ffffff;
+}
+
+.back-arrow {
+    font-size: 16px;
+}
+
+.plans-title {
+    font-size: 20px;
+    font-weight: bold;
+    color: #ffffff;
+    margin: 0 0 4px 0;
+}
+
+.plans-subtitle {
+    font-size: 13px;
+    color: #9ca3af;
+    margin: 0;
+}
+
+/* Plans Container */
+.plans-container {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* Plan Card */
+.plan-card {
+    background: #2c2c2c;
+    border: 2px solid #374151;
+    border-radius: 8px;
+    padding: 16px;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+.plan-card:hover {
+    border-color: #dc2626;
+    transform: translateY(-2px);
+}
+
+.popular-plan {
+    border-color: #dc2626;
+    background: linear-gradient(135deg, #2c2c2c 0%, #3a1f1f 100%);
+}
+
+.popular-badge {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #dc2626;
+    color: white;
+    padding: 2px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+/* Plan Header */
+.plan-header {
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.plan-name {
+    font-size: 18px;
+    font-weight: bold;
+    color: #ffffff;
+    margin: 0 0 8px 0;
+}
+
+.plan-price {
+    margin-bottom: 8px;
+}
+
+.price-amount {
+    font-size: 28px;
+    font-weight: bold;
+    color: #dc2626;
+}
+
+.price-period {
+    font-size: 12px;
+    color: #9ca3af;
+    display: block;
+}
+
+.price-custom {
+    font-size: 16px;
+    font-weight: 600;
+    color: #9ca3af;
+}
+
+.plan-description {
+    font-size: 12px;
+    color: #9ca3af;
+    margin: 8px 0 0 0;
+    line-height: 1.4;
+}
+
+/* Features List */
+.plan-features {
+    margin-bottom: 16px;
+}
+
+.features-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.feature-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: #d1d5db;
+}
+
+.check-icon {
+    color: #10b981;
+    font-weight: bold;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+/* Plan Buttons */
+.plan-button {
+    width: 100%;
+    padding: 10px 16px;
+    border-radius: 6px;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.subscribe-button {
+    background: #4b5563;
+    color: white;
+}
+
+.subscribe-button:hover {
+    background: #6b7280;
+    transform: translateY(-1px);
+}
+
+.popular-button {
+    background: #dc2626;
+}
+
+.popular-button:hover {
+    background: #b91c1c;
+}
+
+.contact-button {
+    background: #374151;
+    color: white;
+}
+
+.contact-button:hover {
+    background: #4b5563;
+}
+
+.button-icon {
+    font-size: 16px;
+}
+
+/* Current Plan Indicator */
+.current-plan-indicator {
+    width: 100%;
+    padding: 10px;
+    text-align: center;
+    color: #9ca3af;
+    font-size: 14px;
+    background: rgba(75, 85, 99, 0.2);
+    border-radius: 6px;
+}
+
+/* Manage Subscription */
+.manage-subscription-container {
+    padding: 0 16px 16px;
+    text-align: center;
+}
+
+.manage-button {
+    background: transparent;
+    border: 1px solid #374151;
+    color: #9ca3af;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.manage-button:hover {
+    border-color: #dc2626;
+    color: #ffffff;
+}
+
+/* Footer */
+.plans-footer {
+    padding: 16px;
+    text-align: center;
+    border-top: 1px solid #374151;
+}
+
+.footer-note {
+    font-size: 11px;
+    color: #6b7280;
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* Loading State */
+.plan-button.loading {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.plan-button.loading::after {
+    content: '...';
+    animation: dots 1.5s infinite;
+}
+
+@keyframes dots {
+    0%, 20% { content: '.'; }
+    40% { content: '..'; }
+    60%, 100% { content: '...'; }
+}
+
+/* Responsive adjustments for narrow panels */
+@media (max-width: 400px) {
+    .plans-container {
+        padding: 12px;
+    }
+    
+    .plan-card {
+        padding: 12px;
+    }
+    
+    .price-amount {
+        font-size: 24px;
+    }
+    
+    .plan-name {
+        font-size: 16px;
+    }
+    
+    .feature-item {
+        font-size: 12px;
+    }
+}

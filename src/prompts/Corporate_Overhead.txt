@@ -1,0 +1,52 @@
+***Corporate_Overhead.txt****
+
+Corporate overhead should typically be split into two sections with each having its own LABELH1 heading: 1) Employee-related Expense and 2) Non-employee Related Expense
+
+IMPORTANT: For both sections, all assumptions in columns C1-C6 must either have a COLUMNHEADER-E code above with a corresponding label in the same column, OR include a comment in square brackets explaining what the unit represents. Example: |~$10000[Per month](C6)| adds "Per month" as a cell comment explaining the unit.
+
+Employee-related Expense best practices:
+- Column assumptions should begin on column 9 and work backwards, so if there is only one column assumption, it should be on column 9. If there are two, they should be on column 8 and 9. If there are 3, column 7, 8, and 9. Etc. etc.
+- Create separate tables for salaried employees, hourly employees, and contractors (unless the contractor is salaried or hourly, in which case they shuld be included in those tables)
+- For common size employees situations (i.e. "I will hire 200 engineers"), you should list every employee if the amount is under 30 across the projection period. If the number is >30, switch to forecasting # of FTE's - Type A with ENDPOINT-E and then multiply by a salary assumption. When using the second approach, you must not use the SUM2-S formula for the subtotal, as it will sum the # of FTE's into the payroll expense. Use FORMULA-S and add each row individually use rd{} instead.
+- Always include a COLUMNHEADER-E code at the top of each table
+- Don't include things that aren't asked for. If no start date is given, assume the employee is already working and remove BEG from the formula. If no raise assumption is given, don't include a raise row or RAISE in the formula. 
+- Likewise, don't include column values that aren't used. If no start date is given, do not include a start date, even if the training data has a start date column.
+- The row for each employee is an expense and should include $ signs in front of each of the 6 F's (or another currency) but it must include SOME currency. Do not use naked F's. Likewise, these are aggregate values and should not include the ~ which would make them italic. 
+- If you create multiple lists for hourly, salary, contractors, etc., each should include its own subtotal and they must be separated from eachother with a BR code.
+
+Default Salaried Employees Template (use this by default):
+
+<BR; row1="(D)|BR(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|"> <LABELH1; row1="(D)|~Employee-related Costs(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|"> <CONST-E; indent="2"; bold="false";  topborder="false"; row1="V1(D)|~% Annual Raise(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|~5%(Y1)|~5%(Y2)|~5%(Y3)|~5%(Y4)|~5%(Y5)|~5%(Y6)|"> <BR; row1="(D)|BR(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|"> <COLUMNHEADER-E; row1="(D)|~Salaried Employees:(L)|(F)|(C1)|(C2)|(C3)|~Salary(C4)|~Start Date(C5)|~End Date(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|"> <FORMULA-S; indent="2"; bold="false";  topborder="false";  customformula="-SPREAD(cd{4})*BEG(cd{5})*END(cd{6})*RAISE(rd{V1},cd{6})"; row1="A1(D)|CEO(L)|(F)|(C1)|(C2)|(C3)|~$120000(C4)|1/1/2026(C5)|1/1/2029(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|"> <FORMULA-S; indent="2"; bold="false";  topborder="false";  customformula="-SPREAD(cd{4})*BEG(cd{5})*END(cd{6})*RAISE(rd{V1},cd{6})"; row1="A2(D)|CFO(L)|(F)|(C1)|(C2)|(C3)|~$50000(C4)|1/1/2025(C5)|1/1/2028(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|"> <SUMLIST-S;  topborder="true"; bold="true"; indent="1"; driver1="A1"; driver2="A2"; sumif="year"; row1="R1(D)|Expense - Payroll Salaries(L)|IS: corporate overhead(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+
+Income Statement Integration Requirements:
+- NEVER pass a "Total Employee-Related" costs line to the income statement
+- Instead, pass each individual subtotal line to the income statement with FinCode "IS: corporate overhead"
+- Use specific, descriptive labels WITHOUT the word "Total": "Payroll Expense - Salaries", "Payroll Expense - Salary Benefits", "Payroll Expense - Hourly", etc.
+- Each subtotal represents a different category of employee expense and should be separately visible on the income statement
+- This prevents double-counting and provides proper granularity for financial statement analysis
+- Example correct structure:
+  * Individual employee rows (no FinCode)
+  * "Payroll Expense - Salaries" subtotal (with FinCode "IS: corporate overhead")
+  * "Payroll Expense - Benefits" subtotal (with FinCode "IS: corporate overhead") 
+  * "Payroll Expense - Hourly" subtotal (with FinCode "IS: corporate overhead")
+  * NO "Total Employee-Related" line with FinCode
+
+Column Assumption Documentation Requirements:
+- All assumptions in columns C1-C6 must either have a COLUMNHEADER-E code above with a corresponding label in the same column, OR include a comment in square brackets explaining what the unit represents
+- Example: If monthly rent is $10,000, use |~$10000[Per month](C6)| - this adds "Per month" as a cell comment explaining the unit
+- This ensures all column assumptions are properly documented and understood by users reviewing the model 
+
+
+Employee specific custom formula codes:
+- RAISE(% calendar year growth, start date): Takes % calendar year increase as driver 1 and start date as driver 2. Creates a factor that increases by x% each calendar year after the start date. Note: A START DATE COLUMN MUST BE INCLUDED WHEN USING RAISE. If no start date is mentioned in the prompt for an employee, default to Jan 1 2025.
+- ANNBONUS(amount, month #): Takes an amount as driver 1 and month number as driver 2. Creates an annual bonus that pays out each calendar year during the specified month. Driver 1 should be an amount and driver 2 should be the month # of the bonus (i.e. 12 for December). If the month is 12 (December), you can use a hard code. All other months must reference a column or row driver. The purpose is an annual bonus paid out each calendar year.
+- QUARTERBONUS(amount): Takes an amount as driver 1. Creates a quarterly bonus that pays out at the end of each quarter (March, June, September, December). Driver 1 should be an amount. The purpose is a quarterly bonus paid out each quarter end.
+- BEG(start date): Takes a start date as driver and creates a condition that is true (1) when the current month is at or after the start date, false (0) otherwise. Used to start an expense from a specific date forward. Multiply your base amount by BEG to have expenses begin at the specified date.
+- END(end date): Takes an end date as driver and creates a condition that is true (1) when the current month is before or at the end date, false (0) otherwise. Used to stop an expense at a specific date. Multiply your base amount by END to have expenses end at the specified date.
+- ONETIMEDATE(specific date): Takes a specific date as driver and creates a condition that is true (1) only during the exact month of that date, false (0) otherwise. Used for one-time expenses that occur in a specific month (e.g., signing bonuses, equipment purchases).
+- SPREAD(annual amount): Takes an annual amount and spreads it evenly across the time series divisor period. Used to convert annual amounts to monthly amounts when the model uses monthly periods.
+- SPREADDATES(total amount, start date, end date): Takes a total amount and spreads it evenly across the months between start date and end date (inclusive). Used for expenses that should be distributed over a specific time period rather than paid in one lump sum. 
+
+
+
+

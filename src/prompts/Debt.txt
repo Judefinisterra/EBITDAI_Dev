@@ -1,0 +1,1345 @@
+# DEBT MODELING GUIDANCE
+
+## ⚠️ CRITICAL DEBT MODELING ALERTS ⚠️
+
+### **🚨 INTEREST PLACEMENT RULE:**
+**INTEREST EXPENSE/INCOME MUST NEVER BE CALCULATED INSIDE DEBT RECONCILIATION TABLES (BEGIN/END).** Interest calculations must ALWAYS be placed AFTER the debt reconciliation table but WITHIN the INDEX block when using INDEX approach. Only PIK interest can be fed into reconciliation tables using DIRECT-S.
+
+### **🚨 CRITICAL: NO HARDCODED ASSUMPTIONS IN CUSTOMFORMULA:**
+**NEVER hardcode interest rates, percentages, divisors, or any assumptions directly into customformula parameters. ALL assumptions must be separate codes using COLUMN-E, SPREAD-E, or CONST-E, then referenced via cd{} syntax.**
+
+**❌ WRONG - Hardcoded assumptions:**
+```
+<FORMULA-S; customformula="-rd{V7}*0.07/12"; row1="V10(D)|Interest Expense(L)|IS: interest expense(F)|...">
+```
+*Problems: 0.07 (7% rate) and /12 (monthly) are hardcoded*
+
+**✅ CORRECT - Separate assumption codes:**
+```
+<CONST-E; row1="V8(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|7%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<CONST-E; row1="V9(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<FORMULA-S; customformula="-rd{V7}*cd{6-V8}/cd{6-V9}"; row1="V10(D)|Interest Expense(L)|IS: interest expense(F)|...">
+```
+
+**WHY THIS MATTERS:**
+- **Transparency**: All assumptions visible and adjustable
+- **Flexibility**: Easy to modify rates without breaking formulas
+- **Compliance**: Follows financial modeling best practices
+- **Maintainability**: Clear separation of assumptions and calculations
+
+### **🚨 LENDING SIGN CHECK:**
+**IF THIS IS A LENDING SCENARIO:** Every single cash flow item you create MUST have `negative="true"` or there is absolutely no point in creating it. The entire purpose of creating separate cash flow rows for lending is to flip the signs. Without `negative="true"`, you're just duplicating incorrect cash flows.
+
+### **🚨 DEBT RECONCILIATION TABLE STRUCTURE:**
+**ALL debt/loan reconciliation tables MUST follow this exact structure:**
+
+1. **LABELH3 Header**: Must always equal the END-S label + ":" (e.g., if END-S shows "Debt", LABELH3 shows "Debt:")
+2. **BEGIN-S and END-S Driver Linking**: BEGIN-S and END-S must reference each other via driver1 parameters
+3. **END-S Label Simplification**: Never use "Ending" in the label - use simple item name only
+   - ❌ WRONG: `"Ending Debt Balance"`
+   - ✅ CORRECT: `"Debt"`
+4. **Complete Structure**: Always include LABELH3 → BEGIN-S → [reconciliation items] → END-S
+
+### **🚨 FINCODE HANDLING WITHIN DEBT RECONCILIATION TABLES:**
+
+#### **For BORROWING (Company Receiving Loans - Liabilities):**
+✅ **Add CF: CFF fincodes DIRECTLY within the reconciliation table:**
+```
+<LABELH3; row1="(D)|~Debt:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<BEGIN-S; driver1="V4"; row1="V2(D)|Beginning Balance(L)|is: liability(F)|...">
+<FORMULA-S; row1="V3(D)|New Borrowing(L)|is: liability(F)|CF: CFF(F)|...">
+<FORMULA-S; row1="A1(D)|Principal Repayment(L)|is: liability(F)|CF: CFF(F)|...">
+<END-S; driver1="V2"; row1="V4(D)|Debt(L)|is: liability(F)|...">
+
+<!-- Interest assumptions (separate codes) -->
+<CONST-E; row1="A3(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<CONST-E; row1="A4(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+
+<!-- Interest calculations OUTSIDE reconciliation table -->
+<FORMULA-S; customformula="-rd{V2}*cd{6-A3}/cd{6-A4}"; row1="A2(D)|Interest Expense(L)|is: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">  <!-- NEGATIVE for borrowing -->
+```
+
+#### **For LENDING (Company Making Loans - Assets):**
+✅ **NO fincodes inside reconciliation table, use DIRECT-S codes outside:**
+```
+<LABELH3; row1="(D)|~Loan Portfolio:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<BEGIN-S; driver1="V4"; row1="V2(D)|Beginning Balance(L)|is: asset(F)|...">
+<FORMULA-S; row1="V3(D)|New Loan Origination(L)|is: asset(F)|...">  <!-- NO fincode here -->
+<FORMULA-S; row1="A1(D)|Principal Repayment(L)|is: asset(F)|...">     <!-- NO fincode here -->
+<END-S; driver1="V2"; row1="V4(D)|Loan Portfolio(L)|is: asset(F)|...">
+
+<!-- Cash flow handling OUTSIDE reconciliation table using DIRECT-S -->
+<DIRECT-S; driver1="V3"; negative="true"; row1="CF1(D)|Lending Cash Outflow(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A1"; negative="true"; row1="CF2(D)|Repayment Cash Inflow(L)|CF: CFI(F)|...">
+
+<!-- Interest assumptions (separate codes) -->
+<CONST-E; row1="A3(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<CONST-E; row1="A4(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+
+<!-- Interest calculations OUTSIDE reconciliation table -->
+<FORMULA-S; customformula="rd{V2}*cd{6-A3}/cd{6-A4}"; row1="A2(D)|Interest Income(L)|is: interest income(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">  <!-- POSITIVE for lending -->
+```
+
+#### **Interest Sign Rules:**
+- **BORROWING**: Interest expense = NEGATIVE (cash flows out when paying interest)
+- **LENDING**: Interest income = POSITIVE (cash flows in when receiving interest)
+
+### **Separate Interest Expense Section (Recommended Layout)**
+
+It is generally best to break out the interest expense calculation into its own section with its own `LABELH3` and separate it from the balance reconciliation table with exactly one `BR` code. This reinforces placement rules and improves readability.
+
+Example:
+```
+<BR; row1="(D)|BR(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<LABELH3; row1="(D)|~Interest Expense - Loan B:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<CONST-E; indent="2"; bold="false"; row1="V11(D)|~% Annual Interest Rate - Loan B(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|~5.00%(Y1)|~5.00%(Y2)|~5.00%(Y3)|~5.00%(Y4)|~5.00%(Y5)|~5.00%(Y6)|">
+<FORMULA-S; indent="1"; bold="true"; topborder="true"; customformula="-AVERAGE(rd{V7},rd{V10})*rd{V11}/timeseriesdivisor"; row1="V12(D)|Interest Expense - Loan B(L)|IS: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+<ACTUALS; values="Loan B|$1000000|2024-12-31|Loan B">
+```
+
+### **ACTUALS for Current Debt Balances**
+
+If the client provides a current outstanding balance for any debt or loan, you MUST record that beginning balance via the `ACTUALS` code. This ensures the opening balance sheet reflects reality before any model-driven movements.
+
+- Place the `ACTUALS` entry matching the loan name used in your END-S label
+- Keep interest calculations OUTSIDE the reconciliation table per interest placement rules
+- Use proper formatting on reconciliation rows (BEGIN/END) and related sections
+
+Example:
+```
+<LABELH1; row1="(D)|~Loan A:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|"> 
+<LABELH3; row1="(D)|~Loan A:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|"> 
+<BEGIN-S; driver1="V4"; indent="2"; bold="false"; row1="V1(D)|Beginning Balance(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|"> 
+<FORMULA-S; indent="2"; bold="false"; customformula="-SUMTABLE(rd{V1})*ONETIMEDATE(cd{6})"; row1="V3(D)|Repayment - Loan A(L)|CF: CFF(F)|(C1)|(C2)|(C3)|(C4)|12/1/2025(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|"> 
+<END-S; driver1="V1"; bold="true"; topborder="true"; indent="1"; row1="V4(D)|Loan A(L)|BS: lt liabilities(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|"> 
+<BR; row1="(D)|BR(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|"> 
+<LABELH3; row1="(D)|~Interest Expense - Loan A:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|"> 
+<CONST-E; indent="2"; bold="false"; row1="V5(D)|~% Annual Interest Rate - Loan A(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|~3.74%(Y1)|~3.74%(Y2)|~3.74%(Y3)|~3.74%(Y4)|~3.74%(Y5)|~3.74%(Y6)|"> 
+<FORMULA-S; indent="1"; bold="true"; customformula="-AVERAGE(rd{V1},rd{V4})*rd{V5}/timeseriesdivisor"; row1="V6(D)|Interest Expense - Loan A(L)|IS: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|"> 
+<ACTUALS; values="Loan A|$2053397|2024-12-31|Loan A">
+```
+
+## SIMPLE DEBT CODES vs INDEX APPROACH
+
+### **Use Simple Debt Codes When:**
+All loans follow **identical, predictable patterns** with standard repayment structures:
+
+**Simple Debt Code Types:**
+- **DAMORT**: Amortizing debt (with down payment/origination)
+- **LAMORT**: Amortizing debt (loan-style)  
+- **DBULLET**: Bullet/balloon payment debt (with down payment)
+- **LBULLET**: Bullet/balloon payment debt (loan-style)
+
+### **Bullet vs Amortizing Decision Logic**
+🚨 **DEFAULT TO BULLET STRUCTURE** when client describes:
+- "Loan is due on [specific date]"
+- "Repaid after [time period]" 
+- "Matures in X years"
+- "Balloon payment"
+- No mention of monthly/regular payments
+
+✅ **Use BULLET codes (DBULLET/LBULLET)** for these scenarios
+
+🔄 **Only use AMORTIZING codes (DAMORT/LAMORT)** when client explicitly mentions:
+- "Monthly payments"
+- "Amortizes over X period"
+- "Regular installments"
+- "Principal and interest payments"
+
+### **Example Interpretations:**
+- ❌ "I need a $100K loan due in 2 years" → **BULLET** (not amortizing)
+- ❌ "Equipment financing repaid after 36 months" → **BULLET** (not amortizing)  
+- ✅ "Equipment loan with monthly payments over 36 months" → **AMORTIZING**
+- ✅ "Mortgage that amortizes over 30 years" → **AMORTIZING**
+
+**Characteristics of Simple Debt:**
+- Same principal amount across all loans
+- Same interest rate and term
+- Standard amortization schedule OR single balloon payment
+- Predictable monthly payments
+- No custom payment milestones
+
+### **Use INDEX Growth Curve When:**
+Individual loans have **custom, non-standard repayment patterns**:
+
+**Characteristics of Complex Debt:**
+- Non-standard repayment schedules
+- Multiple payment milestones at specific ages
+- Variable payment amounts over loan life
+- Custom amortization curves
+- Age-dependent payment patterns
+
+## TERM LOANS - DBULLET-S vs INDEX APPROACH
+
+### **When to Use DBULLET-S for Term Loans:**
+**DBULLET-S should ONLY be used when:**
+- Multiple loans/debt borrowing at **different times**
+- Repayment is **relative to the borrowing time**
+- Each loan has a **fixed term** from its origination date
+
+**Example Scenario for DBULLET-S:**
+- "I borrow in month 1 and repay 12 months later"
+- "I borrow in month 5 and repay 12 months later" 
+- "I borrow in month 10 and repay 12 months later"
+- Each loan matures exactly 12 months after its origination
+
+### **When to Use INDEX Approach for Date-Based Loans:**
+**Use INDEX Growth Curve when:**
+- Loans are repaid on **specific calendar dates** (not relative to borrowing time)
+- All loans mature on the **same date** regardless of origination timing
+- Custom repayment schedules based on **absolute dates**
+
+**Example Scenario for INDEX Approach:**
+- "All loans mature on December 31st regardless of when they were originated"
+- "Loans repaid on specific dates: June 30th, September 30th, December 31st"
+- "Variable repayment amounts based on calendar dates"
+
+### **INDEX Structure for Date-Based Term Loans:**
+**When a specific date is given, model the reconciliation table using:**
+
+```
+<LABELH3; row1="(D)|~Term Loans:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<INDEXBEGIN; driver1="V1"; row1="DateBasedTermLoans">
+  <BEGIN-S; driver1="V4"; row1="V2(D)|Beginning Balance(L)|is: liability(F)|...">
+  <FORMULA-S; row1="V3(D)|New Borrowing(L)|is: liability(F)|[date and amount assumptions]">
+  <FORMULA-S; row1="A1(D)|Principal Repayment(L)|is: liability(F)|[date-based repayment formula]">
+  <END-S; driver1="V2"; row1="V4(D)|Term Loans(L)|is: liability(F)|...">
+  
+  <!-- Interest calculations OUTSIDE debt reconciliation table but WITHIN INDEX -->
+  <AVGMULT2-S; driver1="V2"; driver2="V4"; row1="A2(D)|Interest Expense(L)|is: interest expense(F)|[interest rate formula]">
+<INDEXEND>
+```
+
+**Key Components for Date-Based Term Loans:**
+- **BEG-S**: Starting balance for the period
+- **FORMULA-S**: New borrowing based on date and amount assumptions
+- **FORMULA-S**: Principal repayment based on specific calendar dates
+- **END-S**: Ending balance reconciliation
+- **AVGMULT2-S**: Interest expense calculation using average of beginning and ending balances
+
+### **Decision Logic for Term Loans:**
+
+```
+Are loan repayments relative to individual loan origination dates?
+├── YES → Use DBULLET-S
+│   └── Each loan repays X months after its origination
+└── NO → Use INDEX Growth Curve
+    └── Loans repay on specific calendar dates regardless of origination
+```
+
+**Examples:**
+
+**✅ DBULLET-S Example:**
+- "Equipment financing: Each loan repays 24 months after origination"
+- "Working capital loans: Each loan matures 6 months after issuance"
+
+**✅ INDEX Approach Example:**
+- "All loans mature on fiscal year-end regardless of origination date"
+- "Seasonal repayments: All loans repay on March 31st and September 30th"
+
+## EXAMPLES
+
+### ✅ **Simple Debt Examples** (Use Standard Codes):
+- "I will originate 10 loans per month for $1000 each. They amortize over 24 months and have 5% interest."
+- "We issue $50K of bonds annually. They mature in 5 years with 4% interest paid quarterly."
+- "Monthly equipment financing of $25K, repaid over 36 months at 6% APR."
+
+### ❌ **Complex Debt Examples** (Use INDEX Growth Curve):
+
+#### **Unit-Based INDEX Examples:**
+- "I borrow 10 loans a month. Each is for $1000. They are repaid in 2 payments: 50% in month 12, 50% in month 24."
+- "We originate 5 mortgages per quarter for $200K each with custom schedules: 10% down, interest-only for 12 months, then principal + interest."
+
+#### **Dollar-Based INDEX Examples:**
+- "We will originate $1.2M in loans in January, $2.4M in February. Each loan is repaid 50% in month 12, 50% in month 24 with 5% interest."
+- "Monthly equipment financing volume of $500K, repaid with custom schedule: $0 for months 1-6, then equal payments for months 7-24."
+- "Variable lending: $100K in Q1, $250K in Q2, $400K in Q3. All loans have balloon payment structure: full repayment in month 36."
+
+#### **TABLEMIN Function Examples:**
+- "I borrowed $10,000 and will repay it with $500 monthly payments" → Use TABLEMIN(V1, 500) to prevent overpayment in final month
+- "Equipment loan of $25K with fixed $1,000 monthly payments" → Use TABLEMIN(BEG_BALANCE, 1000) for automatic payment adjustment
+- "Multiple loans, each repaid with $200 monthly installments" → Use TABLEMIN within INDEX structure for each loan cohort
+
+## INDEX APPROACH FOR COMPLEX DEBT
+
+### **Structure (Borrowing Example):**
+```
+<LABELH3; row1="(D)|~Loans:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<SPREAD-E; row1="V1(D)|# of New Loans per Month(L)|...">
+
+<INDEXBEGIN; driver1="V1"; row1="...">
+  <BEGIN-S; driver1="V4"; row1="V3(D)|Beginning Balance(L)|is: liability(F)|...">
+  <CONST-E; row1="V2(D)|New Borrowing(L)|is: liability(F)|CF: CFF(F)|...">  <!-- CF: CFF fincode included -->
+  <FORMULA-S; row1="A1(D)|Principal Payment Month 12(L)|is: liability(F)|CF: CFF(F)|cd{6-V2}*onetimeindex(12)">  <!-- CF: CFF fincode included -->
+  <FORMULA-S; row1="A2(D)|Principal Payment Month 24(L)|is: liability(F)|CF: CFF(F)|cd{6-V2}*onetimeindex(24)">  <!-- CF: CFF fincode included -->
+  <END-S; driver1="V3"; row1="V4(D)|Loans(L)|is: liability(F)|...">
+  
+  <!-- Interest assumptions WITHIN INDEX -->
+  <CONST-E; row1="A5(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  <CONST-E; row1="A6(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  
+  <!-- Interest calculations WITHIN INDEX but OUTSIDE debt reconciliation table -->
+  <FORMULA-S; customformula="-cd{6-V3}*cd{6-A5}/cd{6-A6}"; row1="A3(D)|Interest Expense(L)|is: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">  <!-- NEGATIVE for borrowing -->
+<INDEXEND>
+```
+
+### **Key Components:**
+1. **Volume Driver**: Number of new loans per period (outside INDEX)
+2. **Principal**: Initial loan amount using CONST-E or SPREADINDEX-E
+3. **Custom Payments**: Use FORMULA-S with ONETIMEINDEX() for specific payment dates
+4. **Interest Calculations**: Use FORMULA-S with rd{} references for complex interest logic
+5. **Self-Containment**: All debt logic must be within INDEX block
+
+## 💰 INDEX WITH DOLLAR AMOUNT DRIVERS
+
+### **Two Approaches for INDEX Debt Modeling:**
+
+#### **1. Unit-Based Approach (Number of Loans)**
+- Driver represents **number of loans** originated per period
+- INDEX models **one loan** of specific dollar amount
+- Example: 10 loans per month, each for $1,000
+
+#### **2. Dollar-Based Approach (Total Dollar Amount)**
+- Driver represents **total dollar amount** of lending/borrowing per period
+- INDEX models the behavior of **$1** of debt
+- System automatically scales by driver amount
+
+### **When to Use Dollar-Based Approach:**
+✅ **Use Dollar-Based When:**
+- Client specifies total dollar amounts rather than number of loans
+- Variable loan sizes that aggregate to a total amount
+- Continuous lending amounts (not discrete loans)
+- Easier to think in terms of total lending volume
+
+✅ **Examples Requiring Dollar-Based:**
+- "We will originate $1.2M in loans in January, $2.4M in February"
+- "Monthly lending volume of $500K with balloon payments"
+- "Equipment financing of $50K per month, repaid over custom schedule"
+
+### **Dollar-Based INDEX Structure:**
+```
+<LABELH3; row1="(D)|~Lending Portfolio:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<SPREAD-E; row1="V1(D)|New Lending Volume per Month(L)|1200|2400|1800|...">
+
+<INDEXBEGIN; driver1="V1"; row1="...">
+  <BEGIN-S; driver1="V4"; row1="V3(D)|Beginning Balance per $1(L)|is: asset(F)|...">
+  <CONST-E; row1="V2(D)|Principal per $1 Lent(L)|is: asset(F)|1">
+  <FORMULA-S; row1="A1(D)|Repayment Month 12 per $1(L)|is: asset(F)|-cd{6-V2}*onetimeindex(12)*0.5">
+  <FORMULA-S; row1="A2(D)|Repayment Month 24 per $1(L)|is: asset(F)|-cd{6-V2}*onetimeindex(24)*0.5">
+  <END-S; driver1="V3"; row1="V4(D)|Lending Portfolio(L)|is: asset(F)|...">
+  
+  <!-- Interest assumptions WITHIN INDEX -->
+  <CONST-E; row1="A5(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  <CONST-E; row1="A6(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  
+  <!-- Interest calculations WITHIN INDEX but OUTSIDE debt reconciliation table -->
+  <FORMULA-S; customformula="cd{6-V3}*cd{6-A5}/cd{6-A6}"; row1="A3(D)|Interest per $1(L)|is: interest income(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+<INDEXEND>
+```
+
+### **How Dollar-Based Scaling Works:**
+
+#### **Mathematical Logic:**
+- **V1 Driver**: $1,200 of new lending in January
+- **V2 Inside INDEX**: Models what happens to $1 of lending
+- **System Calculation**: V2 × V1 = $1 × $1,200 = $1,200 of actual principal
+
+#### **Month-by-Month Example:**
+**January (Month 1):**
+- V1 = $1,200 (new lending volume)
+- V2 = $1 (principal per $1 lent)
+- **Result**: $1,200 of new loans originated
+
+**January (Month 13 - 12 months later):**
+- A1 = $1 × ONETIMEINDEX(12) × 0.5 = $0.50 per original $1 lent
+- **Scaled Result**: $0.50 × $1,200 = $600 repayment from January loans
+
+### **Detailed Dollar-Based Example:**
+
+```
+<LABELH3; row1="(D)|~Lending Portfolio:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<!-- Driver: Monthly lending volume -->
+<SPREAD-E; row1="V1(D)|Monthly Lending Volume(L)|1200|2400|1800|0|0|...">
+
+<INDEXBEGIN; driver1="V1"; row1="DollarDebtIndex">
+  <!-- Debt reconciliation table for $1 -->
+  <BEGIN-S; driver1="V4"; row1="V3(D)|Beginning Balance per $1(L)|is: asset(F)|...">
+  <CONST-E; row1="V2(D)|Principal per $1(L)|is: asset(F)|1">  <!-- NO fincode in reconciliation table -->
+  <FORMULA-S; row1="A1(D)|Repayment Month 12 per $1(L)|is: asset(F)|-cd{6-V2}*onetimeindex(12)*0.5">  <!-- NO fincode -->
+  <FORMULA-S; row1="A2(D)|Repayment Month 24 per $1(L)|is: asset(F)|-cd{6-V2}*onetimeindex(24)*0.5">  <!-- NO fincode -->
+  <END-S; driver1="V3"; row1="V4(D)|Lending Portfolio(L)|is: asset(F)|...">
+  
+  <!-- Interest assumptions WITHIN INDEX -->
+  <CONST-E; row1="A5(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  <CONST-E; row1="A6(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  
+  <!-- Interest calculations WITHIN INDEX but OUTSIDE debt reconciliation table -->
+  <FORMULA-S; customformula="cd{6-V3}*cd{6-A5}/cd{6-A6}"; row1="A3(D)|Monthly Interest per $1(L)|is: interest income(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">  <!-- POSITIVE for lending -->
+<INDEXEND>
+
+<!-- Cash flow handling OUTSIDE reconciliation table using DIRECT-S with negative="true" -->
+<DIRECT-S; driver1="V2"; negative="true"; row1="CF1(D)|Principal Outflow per $1(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A1"; negative="true"; row1="CF2(D)|Repayment Month 12 per $1(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A2"; negative="true"; row1="CF3(D)|Repayment Month 24 per $1(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A3"; negative="true"; row1="CF4(D)|Interest Inflow per $1(L)|CF: CFI(F)|...">
+```
+
+### **Results from Dollar-Based Example:**
+
+**January Lending ($1,200):**
+- Principal: $1,200 asset created
+- Cash Flow: -$1,200 (cash outflow from lending)
+
+**January + 12 Months:**
+- Repayment: $600 asset reduction (50% of $1,200)
+- Cash Flow: +$600 (cash inflow from repayment)
+
+**January + 24 Months:**
+- Repayment: $600 asset reduction (remaining 50% of $1,200)
+- Cash Flow: +$600 (final cash inflow from repayment)
+
+**Monthly Interest on January Loans:**
+- Interest Income: $1,200 × 5% ÷ 12 = $5 per month
+- Cash Flow: +$5 per month (interest cash inflow)
+
+### **Dollar-Based vs Unit-Based Comparison:**
+
+| Aspect | Dollar-Based | Unit-Based |
+|--------|-------------|------------|
+| **Driver** | Total $ amount per period | Number of loans per period |
+| **INDEX Models** | $1 of debt behavior | 1 loan of specific $ amount |
+| **Principal Inside INDEX** | Always $1 | Actual loan amount (e.g., $1,000) |
+| **Best For** | Variable loan sizes, total volumes | Fixed loan amounts, discrete counting |
+| **Example Driver** | $1,200, $2,400, $1,800 | 1, 2, 3 (loans) |
+
+### **Key Advantages of Dollar-Based:**
+✅ **Flexible loan sizes** - doesn't assume uniform loan amounts
+✅ **Direct volume tracking** - matches how businesses think about lending volumes
+✅ **Easier scaling** - system handles all multiplication automatically
+✅ **Simpler driver setup** - just enter dollar amounts per period
+
+## DECISION FLOWCHART
+
+```
+Does the debt have standard repayment terms?
+├── YES → Are all loans identical in structure?
+│   ├── YES → Use Simple Debt Codes (DAMORT, LAMORT, DBULLET, LBULLET)
+│   └── NO → Use INDEX Growth Curve
+└── NO → Use INDEX Growth Curve
+    ├── Does client specify total dollar amounts per period?
+    │   ├── YES → Use Dollar-Based INDEX (model $1, driver = total $)
+    │   └── NO → Does client specify number of loans?
+    │       ├── YES → Use Unit-Based INDEX (model 1 loan, driver = count)
+    │       └── NO → Choose based on context:
+    │           ├── Variable loan sizes → Dollar-Based INDEX
+    │           └── Fixed loan amounts → Unit-Based INDEX
+```
+
+## KEY FUNCTIONS FOR COMPLEX DEBT
+
+### **ONETIMEINDEX(month)**
+- **Purpose**: Triggers payment only at specific loan age month
+- **Example**: `ONETIMEINDEX(12)` = payment occurs only in month 12 of loan's life
+- **Use**: Custom payment schedules, balloon payments, milestone payments
+
+### **BEGINDEX(month)**
+- **Purpose**: Starts payment from specific loan age month and continues
+- **Example**: `BEGINDEX(6)` = payments start in month 6 of loan's life and continue
+- **Use**: Delayed payment starts, grace periods ending
+
+### **ENDINDEX(month)**
+- **Purpose**: Ends payment at specific loan age month
+- **Example**: `ENDINDEX(24)` = payments end at month 24 of loan's life
+- **Use**: Limited payment periods, temporary payments
+
+### **rd{driverName}** 
+- **Purpose**: References other rows within INDEX for calculations
+- **Example**: `rd{V2}` = references loan principal row
+- **Use**: Interest calculations, balance references
+
+### **cd{column-driver}**
+- **Purpose**: References specific column value from driver row
+- **Example**: `cd{6-V2}` = column I value from V2 row
+- **Use**: Payment amount calculations
+
+### **🚨 CRITICAL: INTEREST PLACEMENT RULE**
+**INTEREST EXPENSE/INCOME MUST NEVER BE CALCULATED INSIDE DEBT RECONCILIATION TABLES (BEGIN/END).**
+
+Interest calculations must ALWAYS be placed **AFTER** the debt reconciliation table (END statement), but **WITHIN** the INDEX block when using INDEX approach. Never place interest calculations inside the debt reconciliation table itself.
+
+**❌ INCORRECT - Interest Inside Debt Reconciliation Table:**
+```
+<BEGIN-S; row1="...">
+<FORMULA-S; row1="...|New Borrowing(L)|...">
+<FORMULA-S; row1="...|Repayment(L)|...">
+<FORMULA-S; row1="...|Interest Income(L)|..."> <!-- WRONG - Interest inside debt reconciliation -->
+<END-S; row1="...">
+```
+
+**✅ CORRECT - Interest Outside Debt Reconciliation Table:**
+```
+<BEGIN-S; row1="...">
+<FORMULA-S; row1="...|New Borrowing(L)|...">
+<FORMULA-S; row1="...|Repayment(L)|...">
+<END-S; row1="...">
+<!-- Interest calculations come AFTER the debt reconciliation table -->
+<FORMULA-S; row1="...|Interest Income(L)|is: interest income(F)|...">
+```
+
+**🔍 Exception: PIK Interest Only**
+The ONLY way to feed interest into a debt reconciliation table is via DIRECT-S code referencing external interest calculations, and this should ONLY be used for PIK (Payment-In-Kind) interest when you want to add interest to the principal balance:
+
+```
+<!-- Interest calculation outside debt reconciliation table -->
+<FORMULA-S; row1="A5(D)|Interest Calculation(L)|is: interest expense(F)|...">
+
+<!-- PIK interest added to balance inside debt reconciliation table -->
+<BEGIN-S; row1="...">
+<FORMULA-S; row1="...|New Borrowing(L)|...">
+<DIRECT-S; driver1="A5"; row1="...|PIK Interest Added to Balance(L)|...">
+<END-S; row1="...">
+```
+
+### **TABLEMIN Custom Function for Fixed Monthly Payments**
+🎯 **PURPOSE**: Use TABLEMIN for fixed monthly debt payments to prevent overpaying the remaining loan balance.
+
+**When to Use TABLEMIN:**
+- Client specifies fixed monthly payment amounts (e.g., "$100 monthly payment")
+- Need to ensure payments never exceed remaining loan balance
+- Want automatic payment adjustment in final payment period
+
+**TABLEMIN Syntax:**
+```
+customformula="TABLEMIN(driver1, driver2)"
+```
+- **driver1**: Reference to BEG code (starting balance for payment calculation)
+- **driver2**: Fixed monthly payment amount
+
+**How TABLEMIN Works:**
+- Formula: `MIN(SUM(driver1 : OFFSET(INDIRECT(ADDRESS(ROW(),COLUMN())),-1,0)), driver2)`
+- Creates dynamic sum from beginning balance to current row
+- Returns minimum of accumulated balance and fixed payment
+- Prevents overpayment by capping payment at remaining balance
+
+**Example Implementation:**
+```
+<BEGIN-S; row1="V1(D)|Loan Balance(L)|is: liability(F)|...">
+<FORMULA-S; row1="V2(D)|New Borrowing(L)|is: liability(F)|...">
+<FORMULA-S; row1="A1(D)|Fixed Monthly Payment(L)|is: liability(F)|customformula="-TABLEMIN(rd{V1},100)"...>
+<END-S; row1="V3(D)|Ending Balance(L)|is: liability(F)|...">
+```
+
+**Real-World Scenario:**
+- Client: "I borrowed $1,000 and will repay it with $100 monthly payments"
+- Month 1-9: Pays exactly $100 (remaining balance > $100)
+- Month 10: Pays only $100 (final payment, remaining balance = $100)
+- Result: Total payments = $1,000 (no overpayment)
+
+**Complete TABLEMIN Implementation:**
+```
+<LABELH3; row1="(D)|~Loan:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<BEGIN-S; driver1="V3"; row1="V1(D)|Beginning Balance(L)|is: liability(F)|...">
+<FORMULA-S; row1="V2(D)|New Borrowing(L)|is: liability(F)|1000">
+<FORMULA-S; row1="A1(D)|Monthly Payment(L)|is: liability(F)|customformula='TABLEMIN(V1,100)'">
+<END-S; driver1="V1"; row1="V3(D)|Loan(L)|is: liability(F)|...">
+
+<!-- Interest assumptions (separate codes) -->
+<CONST-E; row1="A3(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<CONST-E; row1="A4(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+
+<!-- Interest calculation OUTSIDE the reconciliation table -->
+<FORMULA-S; customformula="rd{V1}*cd{6-A3}/cd{6-A4}"; row1="A2(D)|Interest Expense(L)|is: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+```
+
+**TABLEMIN vs Other Payment Methods:**
+| Method | Use Case | Overpayment Risk |
+|--------|----------|------------------|
+| **TABLEMIN** | Fixed monthly payments | ❌ No - auto-adjusts final payment |
+| **Fixed Amount** | `customformula="100"` | ✅ Yes - may overpay in final period |
+| **AMORT** | Standard amortization | ❌ No - but requires complex setup |
+
+### **SUMTABLE Custom Function for Full Loan Repayment**
+🎯 **PURPOSE**: Use SUMTABLE when the entire loan/debt is repaid in full on a given month # or date.
+
+**When to Use SUMTABLE:**
+- Entire loan is repaid in full on a specific month (e.g., loan repaid in full in month 24)
+- PIK interest has been added to the loan and needs to be repaid with the principal
+- Amortizing loan is repaid in full prior to its ending amortization date
+- Need to capture accumulated balance including all accrued interest/fees
+
+**SUMTABLE Syntax:**
+```
+customformula="SUMTABLE(rd{driver of BEG row})"
+```
+- **rd{driver}**: Must reference the BEG code (beginning balance driver) of the debt reconciliation table
+- **Always link to beginning row**: This ensures the formula captures the full accumulated balance
+
+**How SUMTABLE Works:**
+- Formula: `SUM(driver1:OFFSET(INDIRECT(ADDRESS(ROW(),COLUMN())),-1,0))`
+- Creates cumulative sum from beginning balance to current row
+- Captures all balance movements including PIK interest additions
+- Returns total accumulated balance for full repayment
+
+**Example Implementation - Loan Repaid in Full Month 24:**
+```
+<LABELH3; row1="(D)|~Loan:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+
+<!-- PIK Interest assumptions -->
+<CONST-E; row1="A5(D)|PIK Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|8%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<CONST-E; row1="A6(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+
+<BEGIN-S; driver1="V3"; row1="V1(D)|Beginning Balance(L)|is: liability(F)|...">
+<FORMULA-S; row1="V2(D)|New Borrowing(L)|is: liability(F)|5000">
+<FORMULA-S; customformula="rd{V1}*cd{6-A5}/cd{6-A6}"; row1="A1(D)|PIK Interest Added to Balance(L)|is: liability(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+<FORMULA-S; row1="A2(D)|Full Repayment Month 24(L)|is: liability(F)|customformula='SUMTABLE(rd{V1})*onetimeindex(24)'">
+<END-S; driver1="V1"; row1="V3(D)|Loan(L)|is: liability(F)|...">
+```
+
+**Real-World Scenario:**
+- Client: "We borrowed $5,000. PIK interest of 8% annually is added to the balance. The entire loan plus all accrued interest is repaid in month 24."
+- SUMTABLE captures: Original $5,000 + all accumulated PIK interest over 24 months
+- Repayment occurs only in month 24 using ONETIMEINDEX(24)
+
+**SUMTABLE vs Other Repayment Methods:**
+| Method | Use Case | When to Use |
+|--------|----------|-------------|
+| **SUMTABLE** | Full loan repayment with accumulated balance | Balloon payment + PIK interest, early payoff of amortizing loan |
+| **TABLEMIN** | Fixed monthly payments | Prevent overpayment in regular payment schedule |
+| **Fixed Amount** | Known repayment amount | Standard principal repayment without balance accumulation |
+
+**Key Requirements for SUMTABLE:**
+✅ **Always use rd{BEG_driver}**: Must reference the beginning balance row
+✅ **Combine with ONETIMEINDEX**: Specify exact month for full repayment  
+✅ **Perfect for PIK scenarios**: Captures principal + all accumulated interest
+✅ **Early payoff scenarios**: Ideal when loan repaid before scheduled maturity
+
+### **AMORT Function Placement Rule**
+🚨 **CRITICAL**: The AMORT custom function must ONLY be added as the **last row before ENDING** in the debt reconciliation table. Never place AMORT in the middle of the reconciliation sequence.
+
+**Correct Placement:**
+```
+<BEGIN-S; row1="...">
+<FORMULA-S; row1="...|New Borrowing(L)|...">
+<FORMULA-S; row1="...|Principal Payment(L)|AMORT(...)"> <!-- LAST row before ENDING -->
+<END-S; row1="...">
+```
+
+**Why This Matters:**
+- AMORT calculations depend on cumulative balance calculations
+- Placing AMORT in wrong position breaks debt reconciliation mathematics
+- System expects AMORT as final calculation before closing balance
+
+## ORIGINATION FEES AND ADDITIONAL DEBT COSTS
+
+### **🚨 CRITICAL: ORIGINATION FEES MUST BE CALCULATED OUTSIDE DEBT CODES**
+
+**NEVER add origination fees directly into debt reconciliation tables or debt codes.**
+
+### **Correct Approach for Origination Fees:**
+**Origination fees should:**
+1. **Use assumptions taken OUTSIDE of debt tables/codes**
+2. **Be multiplied by items WITHIN the debt table/codes**
+3. **Specifically multiply by new borrowing/lending amounts**
+
+### **✅ CORRECT Implementation Examples:**
+
+#### **Simple Debt Codes with Origination Fees:**
+```
+<!-- Debt code (unchanged) -->
+<DAMORT-S; driver1="V1"; row1="V2(D)|New Borrowing(L)|is: liability(F)|..."; row2="AS1(D)|Interest Rate(L)|(F)|..."; row3="AS2(D)|Term in Months(L)|(F)|...">
+
+<!-- Origination fee assumption (outside debt code) -->
+<CONST-E; row1="V3(D)|Origination Fee Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|2%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+
+<!-- Origination fee calculation (references debt code output) -->
+<MULT2-S; driver1="V2"; driver2="V3"; row1="V4(D)|Origination Fee Expense(L)|IS: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+```
+
+#### **INDEX Debt with Origination Fees:**
+```
+<INDEXBEGIN; driver1="V1"; row1="DebtWithFees">
+  <BEGIN-S; row1="V2(D)|Outstanding Balance(L)|is: liability(F)|...">
+  <FORMULA-S; row1="V3(D)|New Borrowing(L)|is: liability(F)|cd{6-V1}">
+  <FORMULA-S; row1="A1(D)|Principal Repayment(L)|is: liability(F)|-cd{6-V3}*onetimeindex(24)">
+  <END-S; row1="V4(D)|Ending Balance(L)|is: liability(F)|...">
+  
+  <!-- Interest assumptions -->
+  <CONST-E; row1="A3(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  <CONST-E; row1="A4(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  
+  <!-- Interest calculations OUTSIDE debt reconciliation table -->
+  <FORMULA-S; customformula="rd{V2}*cd{6-A3}/cd{6-A4}"; row1="A2(D)|Interest Expense(L)|is: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+<INDEXEND>
+
+<!-- Origination fee assumption (outside INDEX) -->
+<CONST-E; row1="V5(D)|Origination Fee Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|1.5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+
+<!-- Origination fee calculation (references INDEX output) -->
+<MULT2-S; driver1="V3"; driver2="V5"; row1="V6(D)|Origination Fee Expense(L)|IS: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+```
+
+### **Why This Approach is Required:**
+✅ **Preserves debt code integrity** - Never modifies training data structures
+✅ **Maintains calculation accuracy** - References actual borrowing amounts
+✅ **Proper financial statement flow** - Origination fees flow to correct expense categories
+✅ **Flexibility** - Easy to adjust fee rates without breaking debt logic
+✅ **System compatibility** - Doesn't break script execution
+
+### **❌ WRONG Approaches:**
+❌ **Adding row parameters to debt codes** - Breaks system functionality
+❌ **Embedding fees in debt reconciliation tables** - Violates debt table structure
+❌ **Hardcoding fee amounts** - Loses connection to actual borrowing volumes
+❌ **Including fees in principal amounts** - Distorts debt balance calculations
+
+### **Additional Debt Costs:**
+**This same approach applies to other debt-related costs:**
+- **Closing costs**: Multiply closing cost rate × new borrowing
+- **Loan processing fees**: Multiply processing rate × new borrowing  
+- **Legal fees**: Multiply legal fee rate × new borrowing
+- **Appraisal fees**: Use CONST-E for fixed amounts or rates
+- **Insurance premiums**: Multiply insurance rate × outstanding balance
+
+### **Cash Flow Treatment:**
+**Origination fees typically affect cash flow differently than principal:**
+```
+<!-- If origination fees reduce cash at origination -->
+<MULT2-S; driver1="V4"; driver2="-1"; row1="V7(D)|Origination Fee Cash Outflow(L)|CF: CFF(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">
+```
+
+### **Key Implementation Rules:**
+1. **Always use separate codes** for fee calculations
+2. **Reference debt code outputs** using rd{} syntax  
+3. **Place fee calculations AFTER debt codes** in sequence
+4. **Use appropriate fincodes** (typically IS: interest expense)
+5. **Consider cash flow timing** - fees may affect cash differently than principal
+
+## VALIDATION CHECKLIST
+
+### For Simple Debt:
+✓ All loans have identical terms and structure
+✓ Standard amortization OR bullet payment structure
+✓ No custom payment schedules or milestones
+✓ Uses appropriate prefix (D=down payment, L=loan)
+
+### For INDEX Debt:
+✓ Volume driver exists for loan origination volume
+✓ Custom payment logic uses ONETIMEINDEX() functions
+✓ Interest calculations placed OUTSIDE debt reconciliation table (never inside BEGIN/END)
+✓ Interest calculations placed WITHIN INDEX block (inside INDEXBEGIN/INDEXEND)
+✓ Interest calculations reference loan balances correctly  
+✓ All debt components self-contained within INDEX
+✓ Principal and payment flows have proper fincodes
+✓ Only PIK interest uses DIRECT-S to feed into debt reconciliation table
+
+### For Dollar-Based INDEX Debt:
+✓ Driver represents total dollar amounts (not number of loans)
+✓ Principal inside INDEX is exactly $1 (not actual loan amount)
+✓ All formulas reference cd{6-V2} where V2 = $1
+✓ System scaling works: $1 model × dollar driver = correct totals
+✓ Interest rates applied to $1 principal correctly
+✓ Repayment percentages applied to $1 principal correctly
+
+## BORROWING vs LENDING
+
+### **Borrowing (Default Behavior - Company Receiving Loans)**
+- Debt codes model the company **receiving loans** (liabilities)
+- Principal increases liabilities (positive)
+- Repayments decrease liabilities (negative)
+- **✅ FINCODE HANDLING**: Add **CF: CFF fincodes DIRECTLY** within reconciliation table
+- **Interest**: NEGATIVE (company pays interest expense)
+
+### **Lending (Company Making Loans to Others)**
+- Company **originating loans to others** (assets)
+- Principal becomes an asset (positive)
+- Repayments reduce the asset (negative)
+- **✅ FINCODE HANDLING**: 
+  - **NO fincodes** within reconciliation table items
+  - Use **DIRECT-S codes with negative="true"** OUTSIDE reconciliation table
+  - DIRECT-S codes have **CF: CFI** fincodes (Cash Flow from Investing)
+- **Interest**: POSITIVE (company receives interest income)
+
+## 🚨 CRITICAL: FINCODE SIGN REQUIREMENTS
+
+### **The Golden Rule for Fincode Signs:**
+**Signs in fincode items must reflect the ACTUAL ECONOMIC IMPACT on the balance sheet and cash flow.**
+
+### **LENDING (Company Making Loans) - Sign Requirements:**
+**When the company is LENDING money to others:**
+
+✅ **New Borrowing/Loan Origination:**
+- **Fincode Sign**: NEGATIVE (-)
+- **Economic Logic**: Cash flows OUT when making loans
+- **Balance Sheet**: Asset increases, Cash decreases
+- **Example**: `-1000` when lending $1,000
+
+✅ **Repayment Received:**
+- **Fincode Sign**: POSITIVE (+)
+- **Economic Logic**: Cash flows IN when receiving repayments
+- **Balance Sheet**: Asset decreases, Cash increases
+- **Example**: `+500` when receiving $500 repayment
+
+✅ **Interest Income:**
+- **Fincode Sign**: POSITIVE (+)
+- **Economic Logic**: Cash flows IN when receiving interest
+- **Income Statement**: Revenue increases
+- **Example**: `+25` when receiving $25 interest payment
+
+### **BORROWING (Company Receiving Loans) - Sign Requirements:**
+**When the company is BORROWING money from others:**
+
+✅ **New Borrowing/Loan Receipt:**
+- **Fincode Sign**: POSITIVE (+)
+- **Economic Logic**: Cash flows IN when receiving loans
+- **Balance Sheet**: Liability increases, Cash increases
+- **Example**: `+1000` when borrowing $1,000
+
+✅ **Repayment Made:**
+- **Fincode Sign**: NEGATIVE (-)
+- **Economic Logic**: Cash flows OUT when making repayments
+- **Balance Sheet**: Liability decreases, Cash decreases
+- **Example**: `-500` when paying $500 repayment
+
+✅ **Interest Expense:**
+- **Fincode Sign**: NEGATIVE (-)
+- **Economic Logic**: Cash flows OUT when paying interest
+- **Income Statement**: Expense increases
+- **Example**: `-25` when paying $25 interest
+
+### **Sign Verification Table:**
+
+| Transaction Type | Lending (Company Lends) | Borrowing (Company Borrows) |
+|------------------|-------------------------|------------------------------|
+| **New Loan** | NEGATIVE (-) | POSITIVE (+) |
+| **Repayment** | POSITIVE (+) | NEGATIVE (-) |
+| **Interest** | POSITIVE (+) | NEGATIVE (-) |
+
+### **🚨 CRITICAL: LENDING CASH FLOW SIGN REQUIREMENTS**
+
+### **The Golden Rule for Lending Cash Flows:**
+**ALL lending cash flow items MUST have `negative="true"` attribute or there is NO POINT in adding them.**
+
+The entire purpose of creating separate cash flow rows for lending is to flip the signs. Without `negative="true"`, you're just duplicating the same cash flow direction as borrowing, which defeats the purpose.
+
+### **📋 PRACTICAL FINCODE SIGN EXAMPLES:**
+
+#### **Example 1: Lending Scenario - $10,000 Loan**
+**Company lends $10,000, receives $5,000 repayment in month 12, $5,000 in month 24, plus monthly interest:**
+
+```
+<LABELH3; row1="(D)|~Loan Portfolio:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<INDEXBEGIN; driver1="V1">
+  <BEGIN-S; driver1="V4"; row1="V2(D)|Beginning Balance(L)|is: asset(F)|...">
+  <FORMULA-S; row1="V3(D)|New Loan Origination(L)|is: asset(F)|10000">  <!-- NO fincode in reconciliation table -->
+  <FORMULA-S; row1="A1(D)|Repayment Month 12(L)|is: asset(F)|-5000*onetimeindex(12)">  <!-- NO fincode in reconciliation table -->
+  <FORMULA-S; row1="A2(D)|Repayment Month 24(L)|is: asset(F)|-5000*onetimeindex(24)">  <!-- NO fincode in reconciliation table -->
+  <END-S; driver1="V2"; row1="V4(D)|Loan Portfolio(L)|is: asset(F)|...">
+  
+  <!-- Interest assumptions WITHIN INDEX -->
+  <CONST-E; row1="A5(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  <CONST-E; row1="A6(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  
+  <!-- Interest calculations OUTSIDE debt reconciliation table but WITHIN INDEX -->
+  <FORMULA-S; customformula="rd{V2}*cd{6-A5}/cd{6-A6}"; row1="A3(D)|Interest Income(L)|is: interest income(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">  <!-- POSITIVE for lending -->
+<INDEXEND>
+
+<!-- Cash flow handling OUTSIDE reconciliation table using DIRECT-S with negative="true" -->
+<DIRECT-S; driver1="V3"; negative="true"; row1="CF1(D)|Lending Cash Out(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A1"; negative="true"; row1="CF2(D)|Repayment Cash In Month 12(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A2"; negative="true"; row1="CF3(D)|Repayment Cash In Month 24(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A3"; negative="true"; row1="CF4(D)|Interest Cash In(L)|CF: CFI(F)|...">
+```
+
+**Result Verification:**
+- **Month 1**: Cash Flow = -$10,000 (cash out when lending) ✅
+- **Month 12**: Cash Flow = +$5,000 (cash in from repayment) ✅
+- **Month 24**: Cash Flow = +$5,000 (cash in from repayment) ✅
+- **Monthly**: Cash Flow = +$X (cash in from interest) ✅
+
+#### **Example 2: Borrowing Scenario - $10,000 Loan**
+**Company borrows $10,000, makes $5,000 repayment in month 12, $5,000 in month 24, plus monthly interest:**
+
+```
+<LABELH3; row1="(D)|~Debt:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<INDEXBEGIN; driver1="V1">
+  <BEGIN-S; driver1="V4"; row1="V2(D)|Beginning Balance(L)|is: liability(F)|...">
+  <FORMULA-S; row1="V3(D)|New Borrowing(L)|is: liability(F)|CF: CFF(F)|10000">  <!-- CF: CFF fincode included -->
+  <FORMULA-S; row1="A1(D)|Repayment Month 12(L)|is: liability(F)|CF: CFF(F)|-5000*onetimeindex(12)">  <!-- CF: CFF fincode included -->
+  <FORMULA-S; row1="A2(D)|Repayment Month 24(L)|is: liability(F)|CF: CFF(F)|-5000*onetimeindex(24)">  <!-- CF: CFF fincode included -->
+  <END-S; driver1="V2"; row1="V4(D)|Debt(L)|is: liability(F)|...">
+  
+  <!-- Interest assumptions WITHIN INDEX -->
+  <CONST-E; row1="A5(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  <CONST-E; row1="A6(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+  
+  <!-- Interest calculations OUTSIDE debt reconciliation table but WITHIN INDEX -->
+  <FORMULA-S; customformula="-rd{V2}*cd{6-A5}/cd{6-A6}"; row1="A3(D)|Interest Expense(L)|is: interest expense(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">  <!-- NEGATIVE for borrowing -->
+<INDEXEND>
+```
+
+**Result Verification:**
+- **Month 1**: Cash Flow = +$10,000 (cash in when borrowing) ✅
+- **Month 12**: Cash Flow = -$5,000 (cash out for repayment) ✅
+- **Month 24**: Cash Flow = -$5,000 (cash out for repayment) ✅
+- **Monthly**: Cash Flow = -$X (cash out for interest) ✅
+
+### **🔍 FINCODE SIGN VERIFICATION CHECKLIST:**
+
+**Before implementing any debt model, verify these signs:**
+
+#### **For LENDING (Company Making Loans):**
+✅ **New Loan Origination**: Asset fincode = POSITIVE (+)
+✅ **Repayment Received**: Asset fincode = NEGATIVE (-)
+✅ **Interest Income**: Income fincode = POSITIVE (+)
+✅ **Cash Flow Items**: ALL must have `negative="true"` attribute
+
+#### **For BORROWING (Company Receiving Loans):**
+✅ **New Borrowing**: Liability fincode = POSITIVE (+)
+✅ **Repayment Made**: Liability fincode = NEGATIVE (-)
+✅ **Interest Expense**: Expense fincode = POSITIVE (+)
+✅ **Cash Flow Items**: Use standard CF: CFF fincodes
+
+### **❌ COMMON FINCODE SIGN ERRORS:**
+
+**🚨 LENDING ERRORS:**
+- ❌ New loan origination with NEGATIVE asset fincode
+- ❌ Repayment with POSITIVE asset fincode
+- ❌ Interest income with NEGATIVE income fincode
+- ❌ Missing `negative="true"` on lending cash flow items
+
+**🚨 BORROWING ERRORS:**
+- ❌ New borrowing with NEGATIVE liability fincode
+- ❌ Repayment with POSITIVE liability fincode
+- ❌ Interest expense with NEGATIVE expense fincode
+- ❌ Using CF: CFI instead of CF: CFF for borrowing
+
+### **Sign Logic Verification Checklist:**
+
+#### **For Lending Scenarios - ALWAYS Verify:**
+✅ **Principal Outflow** (when making loans):
+- Balance sheet: Asset increases (+)
+- Cash flow: Cash decreases (-) → **MUST have `negative="true"`**
+
+✅ **Principal Inflow** (when receiving repayments):
+- Balance sheet: Asset decreases (-)
+- Cash flow: Cash increases (+) → **MUST have `negative="true"`** to flip the negative asset change
+
+✅ **Interest Income**:
+- Income statement: Revenue increases (+)
+- Cash flow: Cash increases (+) → **MUST have `negative="true"`** if sourced from negative interest expense
+
+#### **Common Sign Flow Patterns:**
+
+**📊 CORRECT Lending Flow:**
+```
+Balance Sheet Asset: +$1000 (loan originated)
+Cash Flow Item: -$1000 (cash out) with negative="true"
+Final Cash Flow: -$1000 (correct - cash decreased when loan was made)
+```
+
+**❌ INCORRECT Lending Flow (Missing negative="true"):**
+```
+Balance Sheet Asset: +$1000 (loan originated)
+Cash Flow Item: +$1000 (WRONG - no negative="true")
+Final Cash Flow: +$1000 (WRONG - shows cash increased when loan was made)
+```
+
+### **Double-Check Questions for All Lending Cash Flows:**
+
+1. **"Does this cash flow item have `negative="true"`?"**
+   - If NO → **FIX IT** or remove the item entirely
+
+2. **"What actually happened to cash when this transaction occurred?"**
+   - Made a loan → Cash went OUT (negative)
+   - Received repayment → Cash came IN (positive)
+   - Received interest → Cash came IN (positive)
+
+3. **"Does my final cash flow direction match the actual cash movement?"**
+   - If NO → Check your `negative="true"` attributes
+
+4. **"Am I creating unnecessary cash flow items?"**
+   - Only create separate CF items if you need to flip signs or change classifications
+   - If the original debt reconciliation already produces correct cash flows, don't add redundant items
+
+### **Implementation for Lending:**
+
+#### **Simple Debt Codes:**
+- **LAMORT** and **LBULLET** automatically handle lending logic
+- No additional rows needed - built-in sign reversal and CFI classification
+
+#### **Complex INDEX Debt:**
+Must manually add rows to reverse signs before passing to CF: CFI:
+```
+<INDEXBEGIN; driver1="V1">
+  <CONST-E; row1="V2(D)|Loan Principal(L)|is: asset(F)|...">
+  <FORMULA-S; row1="A1(D)|Principal Payment(L)|is: asset(F)|-cd{6-V2}*onetimeindex(12)">
+  <!-- Manual reversal rows for CFI reconciliation -->
+  <MULT2-S; driver1="V2"; driver2="-1"; row1="A2(D)|Lending - Principal Outflow(L)|CF: CFI(F)|negative='true'">
+  <MULT2-S; driver1="A1"; driver2="-1"; row1="A3(D)|Lending - Principal Inflow(L)|CF: CFI(F)|negative='true'">
+<INDEXEND>
+```
+
+### **🔍 DETAILED SIGN VERIFICATION EXAMPLES:**
+
+#### **Example 1: Correct Lending Implementation**
+```
+<LABELH3; row1="(D)|~Loan Portfolio:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<INDEXBEGIN; driver1="V1">
+  <BEGIN-S; driver1="V4"; row1="V3(D)|Beginning Balance(L)|is: asset(F)|...">
+  <CONST-E; row1="V2(D)|Loan Principal(L)|is: asset(F)|1000">  <!-- NO fincode in reconciliation table -->
+  <FORMULA-S; row1="A1(D)|Principal Payment Month 12(L)|is: asset(F)|-cd{6-V2}*onetimeindex(12)*0.5">  <!-- NO fincode -->
+  <FORMULA-S; row1="A2(D)|Principal Payment Month 24(L)|is: asset(F)|-cd{6-V2}*onetimeindex(24)*0.5">  <!-- NO fincode -->
+  <END-S; driver1="V3"; row1="V4(D)|Loan Portfolio(L)|is: asset(F)|...">
+  
+  <!-- Interest calculations MUST be outside INDEXBEGIN/INDEXEND -->
+<INDEXEND>
+
+<!-- Cash flow handling OUTSIDE reconciliation table using DIRECT-S with negative="true" -->
+<DIRECT-S; driver1="V2"; negative="true"; row1="CF1(D)|Lending - Principal Outflow(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A1"; negative="true"; row1="CF2(D)|Lending - Principal Inflow Month 12(L)|CF: CFI(F)|...">
+<DIRECT-S; driver1="A2"; negative="true"; row1="CF3(D)|Lending - Principal Inflow Month 24(L)|CF: CFI(F)|...">
+
+<!-- Interest assumptions (separate codes) -->
+<CONST-E; row1="A7(D)|Annual Interest Rate(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|5%(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+<CONST-E; row1="A8(D)|Months per Year(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|12(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|">
+
+<!-- Interest and interest cash flows placed AFTER INDEX block -->
+<FORMULA-S; customformula="cd{6-V2}*cd{6-A7}/cd{6-A8}"; row1="A3(D)|Interest Income(L)|is: interest income(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|$F(Y1)|$F(Y2)|$F(Y3)|$F(Y4)|$F(Y5)|$F(Y6)|">  <!-- POSITIVE for lending -->
+<DIRECT-S; driver1="A3"; negative="true"; row1="CF4(D)|Lending - Interest Inflow(L)|CF: CFI(F)|...">
+```
+
+#### **Example 2: WRONG Implementation (Missing negative="true")**
+```
+❌ INCORRECT - DO NOT DO THIS:
+<MULT2-S; driver1="V2"; driver2="-1"; row1="CF1(D)|Lending - Principal Outflow(L)|CF: CFI(F)">
+<!-- Missing negative="true" means cash flow shows POSITIVE when loan is made -->
+<!-- This is WRONG - when you lend money, cash should DECREASE -->
+```
+
+#### **Example 3: Cash Flow Logic Verification**
+For a $1000 loan originated in Month 1, repaid $500 in Month 12, $500 in Month 24, with 5% interest:
+
+**Month 1 (Loan Origination):**
+- Balance Sheet: Asset +$1000
+- Cash Flow: Should be -$1000 (cash decreases when loan is made)
+- Code: `<MULT2-S; driver1="V2"; driver2="-1"; row1="CF1(D)|Principal Outflow(L)|CF: CFI(F)|negative='true'">`
+- Result: V2 = +1000, multiplied by -1 = -1000, then negative="true" flips to -1000 ✅
+
+**Month 12 (First Repayment):**
+- Balance Sheet: Asset -$500
+- Cash Flow: Should be +$500 (cash increases when repayment received)
+- Code: `<MULT2-S; driver1="A1"; driver2="-1"; row1="CF2(D)|Principal Inflow(L)|CF: CFI(F)|negative='true'">`
+- Result: A1 = -500, multiplied by -1 = +500, then negative="true" flips to +500 ✅
+
+### **Key Requirements for Lending:**
+✓ Remove all **CF: CFF** fincodes from debt items
+✓ Add **CF: CFI** fincodes for cash flow classification  
+✓ Create sign reversal rows for INDEX debt reconciliation
+✓ Principal becomes asset, not liability
+✓ Use **LAMORT/LBULLET** for simple lending scenarios
+
+## COMMON MISTAKES
+
+### **🚨 CRITICAL LENDING ERRORS:**
+❌ **FATAL**: Missing `negative="true"` on lending cash flow items
+❌ **FATAL**: Cash flows showing wrong direction (positive when should be negative)
+❌ **Wrong**: Using CF: CFF fincodes for lending scenarios (should be CF: CFI)
+❌ **Wrong**: Forgetting sign reversal rows entirely for INDEX lending
+❌ **Wrong**: Creating cash flow items without proper sign verification
+
+### **🚨 CRITICAL INTEREST PLACEMENT ERRORS:**
+❌ **FATAL**: Placing interest expense/income calculations inside debt reconciliation tables (BEGIN/END)
+❌ **FATAL**: Using interest calculations as debt reconciliation table items
+❌ **Wrong**: Including interest in debt balance movements (except PIK interest)
+❌ **Wrong**: Forgetting that interest affects P&L, not debt balance reconciliation
+❌ **Wrong**: Placing interest calculations outside INDEX block when using INDEX approach
+
+### **🚨 CRITICAL HARDCODED ASSUMPTION ERRORS:**
+❌ **FATAL**: Hardcoding interest rates directly in customformula (e.g., *0.07/12)
+❌ **FATAL**: Hardcoding monthly divisors directly in customformula (e.g., /12)
+❌ **FATAL**: Hardcoding percentages directly in customformula (e.g., *0.5 for 50%)
+❌ **Wrong**: Embedding any assumption values in formulas instead of separate codes
+❌ **Wrong**: Using fixed numbers in calculations without corresponding assumption codes
+
+### **General Debt Modeling Errors:**
+❌ **Wrong**: Using simple codes for custom repayment schedules
+❌ **Wrong**: External references to INDEX debt drivers
+❌ **Wrong**: Missing fincodes on principal and payment flows
+❌ **Wrong**: Mixing simple debt codes with INDEX approach for same loan type
+
+### **🚨 DOLLAR-BASED INDEX ERRORS:**
+❌ **FATAL**: Using actual loan amount instead of $1 inside INDEX
+❌ **FATAL**: Setting driver to number of loans instead of dollar amounts
+❌ **Wrong**: Forgetting that INDEX models $1, not the full amount
+❌ **Wrong**: Using cd{6-V2} when V2 ≠ $1
+❌ **Wrong**: Applying interest rates to wrong base amount inside INDEX
+
+### **✅ CORRECT APPROACH:**
+✅ **Correct**: ALL interest calculations MUST be placed OUTSIDE debt reconciliation tables (BEGIN/END)
+✅ **Correct**: ALL interest calculations MUST be placed WITHIN INDEX block when using INDEX approach
+✅ **Correct**: ALL lending cash flows MUST have `negative="true"`
+✅ **Correct**: Verify cash flow direction matches actual cash movement
+✅ **Correct**: Choose one approach per debt type consistently
+✅ **Correct**: Use INDEX for ANY custom repayment logic
+✅ **Correct**: Model single loan within INDEX, scale by volume driver
+✅ **Correct**: Use LAMORT/LBULLET for simple lending scenarios
+✅ **Correct**: Add manual sign reversal with `negative="true"` for complex INDEX lending
+✅ **Correct**: Only use DIRECT-S for PIK interest feeding into debt reconciliation tables
+✅ **Correct**: Use TABLEMIN for fixed monthly payments to prevent overpayment
+
+### **✅ DOLLAR-BASED INDEX BEST PRACTICES:**
+✅ **Correct**: Always model exactly $1 of principal inside INDEX
+✅ **Correct**: Set driver to total dollar amounts, not loan counts
+✅ **Correct**: Let the system handle scaling ($1 model × dollar driver)
+✅ **Correct**: Apply interest rates to $1 principal: cd{6-V2}*rate/12
+✅ **Correct**: Apply repayment percentages to $1: cd{6-V2}*onetimeindex(month)*percentage
+✅ **Correct**: Use dollar-based when client specifies total volumes rather than loan counts
+
+### **🔍 FINAL VERIFICATION CHECKLIST:**
+Before submitting any debt model, ask these questions:
+
+1. **Are ALL interest calculations placed OUTSIDE of debt reconciliation tables (BEGIN/END)?**
+   - Interest should be calculated AFTER debt reconciliation blocks but WITHIN INDEX blocks
+   - Only PIK interest uses DIRECT-S to feed into debt balance reconciliation
+
+2. **Are ALL fincode signs correct for the scenario?**
+   - **For LENDING**: New loan (+), Repayment (-), Interest income (+)
+   - **For BORROWING**: New borrowing (+), Repayment (-), Interest expense (+)
+
+3. **Does every lending cash flow item have `negative="true"`?**
+   - ALL lending cash flow items MUST have this attribute
+
+4. **Do the cash flow directions make economic sense?**
+   - **Lending**: Loan origination = Cash OUT (-), Repayment = Cash IN (+), Interest = Cash IN (+)
+   - **Borrowing**: Loan receipt = Cash IN (+), Repayment = Cash OUT (-), Interest = Cash OUT (-)
+
+5. **Are all cash flows properly classified?**
+   - **Lending**: Use CF: CFI (Cash Flow from Investing)
+   - **Borrowing**: Use CF: CFF (Cash Flow from Financing)
+
+6. **Did I test the signs by tracing through one complete loan lifecycle?**
+   - Verify month 1 (origination), repayment months, and interest payments
+
+7. **For dollar-based INDEX: Is the principal inside INDEX exactly $1?**
+
+8. **For fixed monthly payments: Did I use TABLEMIN to prevent overpayment?**
+   - TABLEMIN(beginning_balance_driver, fixed_payment_amount)
+   - Ensures final payment doesn't exceed remaining balance
+
+9. **Are asset/liability increases and decreases properly signed?**
+   - **Assets**: Increase = POSITIVE (+), Decrease = NEGATIVE (-)
+   - **Liabilities**: Increase = POSITIVE (+), Decrease = NEGATIVE (-)
+
+10. **Are income/expense items properly signed?**
+    - **Income**: Always POSITIVE (+) for revenue recognition
+    - **Expenses**: Always POSITIVE (+) for expense recognition
+
+11. **Are ALL assumptions properly externalized from customformula parameters?**
+    - **NO hardcoded interest rates**: Use separate CONST-E/COLUMN-E/SPREAD-E codes
+    - **NO hardcoded divisors**: Use separate assumption codes for /12, /365, etc.
+    - **NO hardcoded percentages**: Use separate assumption codes for 0.5, 0.25, etc.
+    - **Reference assumptions**: Use cd{6-AssumptionCode} syntax in customformula
+
+If ANY answer is NO, review and fix the implementation before proceeding.
+
+## 🚨 CRITICAL: REFINANCING AND DATE ASSUMPTION LINKING
+
+### **🔗 THE REFINANCING RULE: ONE DATE, ONE ASSUMPTION**
+
+**When modeling debt refinancing scenarios, the repayment date of the old loan and the borrowing date of the new loan MUST reference the same date assumption. NEVER create separate date assumptions for the same refinancing event.**
+
+### **❌ WRONG APPROACH - Duplicate Date Assumptions:**
+```
+<!-- Loan 1 - Wrong: Creates separate repayment date assumption -->
+<COLUMN-E; row1="V1(D)|Borrowing Date(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|1/1/2025(C6)|...">
+<COLUMN-E; row1="V2(D)|Repayment Date(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|1/1/2026(C6)|...">
+
+<!-- Loan 2 - Wrong: Creates duplicate date assumption for same event -->
+<COLUMN-E; row1="V11(D)|Borrowing Date(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|1/1/2026(C6)|...">
+<COLUMN-E; row1="V12(D)|Repayment Date(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|1/1/2027(C6)|...">
+```
+
+**Problems with this approach:**
+- Creates TWO separate assumptions for the refinancing date (V2 and V11 both = 1/1/2026)
+- If user wants to change refinancing date, they must update TWO places
+- Risk of inconsistent dates if one is updated but not the other
+- Violates DRY principle (Don't Repeat Yourself)
+
+### **✅ CORRECT APPROACH - Linked Date Assumptions:**
+```
+<!-- Shared date assumptions for refinancing -->
+<COLUMN-E; row1="V1(D)|Initial Borrowing Date(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|1/1/2025(C6)|...">
+<COLUMN-E; row1="V2(D)|Refinancing Date(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|1/1/2026(C6)|...">
+<COLUMN-E; row1="V3(D)|Final Repayment Date(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|1/1/2027(C6)|...">
+
+<!-- Loan 1 - References shared refinancing date -->
+<COLUMN-E; row1="V10(D)|~Amount - Loan 1(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|~$1000000(C6)|...">
+<COLUMN-E; row1="V11(D)|~% Interest Rate - Loan 1(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|~25%(C6)|...">
+
+<!-- Loan 1 reconciliation references V1 for borrowing, V2 for repayment -->
+<FORMULA-S; row1="V12(D)|New Borrowing - Loan 1(L)|CF: cff(F)|customformula="cd{6-V10}*ONETIMEDATE(cd{6-V1})"|...">
+<FORMULA-S; row1="V13(D)|Repayment - Loan 1(L)|CF: cff(F)|customformula="-sumtable(rd{V_BEGINNING})*ONETIMEDATE(cd{6-V2})"|...">
+
+<!-- Loan 2 - References same refinancing date for borrowing -->
+<COLUMN-E; row1="V20(D)|~% Interest Rate - Loan 2(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|~15%(C6)|...">
+
+<!-- Loan 2 reconciliation references V2 for borrowing (same as Loan 1 repayment), V3 for repayment -->
+<FORMULA-S; row1="V21(D)|New Borrowing - Loan 2(L)|CF: cff(F)|customformula="rd{V13}*ONETIMEDATE(cd{6-V2})"|...">
+<FORMULA-S; row1="V22(D)|Repayment - Loan 2(L)|CF: cff(F)|customformula="-sumtable(rd{V_BEGINNING_2})*ONETIMEDATE(cd{6-V3})"|...">
+```
+
+### **Benefits of Correct Approach:**
+✅ **Single source of truth**: Refinancing date defined once in V2
+✅ **Easy updates**: Change refinancing date in one place, both loans update automatically  
+✅ **Consistency guaranteed**: Impossible to have mismatched dates
+✅ **Clear intent**: Model clearly shows these are linked events
+✅ **Maintainability**: Future changes are simple and error-free
+
+### **🔗 LINKING PRINCIPLES FOR ALL SHARED DATES:**
+
+#### **1. Refinancing Scenarios:**
+- **Old loan repayment date** = **New loan borrowing date**
+- Create ONE shared date assumption
+- Both loans reference the same date driver
+
+#### **2. Multiple Loan Maturities:**
+- If multiple loans mature on the same date, create ONE maturity date assumption
+- All loans reference the same maturity date driver
+
+#### **3. Synchronized Events:**
+- Any loans that have events occurring on the same date should share date assumptions
+- Examples: Quarterly payment dates, fiscal year-end maturities, seasonal refinancing
+
+### **🎯 IMPLEMENTATION STEPS:**
+
+#### **Step 1: Identify Shared Dates**
+Review the debt scenario for dates that appear multiple times:
+- Refinancing dates (old loan repayment = new loan borrowing)
+- Common maturity dates
+- Synchronized payment schedules
+
+#### **Step 2: Create Shared Date Assumptions**
+Create ONE date assumption for each unique date:
+```
+<COLUMN-E; row1="V1(D)|Event Date Name(L)|(F)|...|MM/DD/YYYY(C6)|...">
+```
+
+#### **Step 3: Link All References**
+Use cd{6-V1} syntax to reference the shared date in all relevant formulas:
+```
+customformula="...ONETIMEDATE(cd{6-V1})..."
+```
+
+#### **Step 4: Validate Consistency**
+Verify that:
+- No duplicate date assumptions exist for the same event
+- All related loans reference the correct shared date assumption
+- Date changes propagate correctly throughout the model
+
+### **🚨 COMMON REFINANCING SCENARIOS:**
+
+#### **Bridge Loan Refinancing:**
+```
+<!-- Shared dates -->
+<COLUMN-E; row1="V1(D)|Initial Funding Date(L)|(F)|...|1/1/2025(C6)|...">
+<COLUMN-E; row1="V2(D)|Bridge Loan Repayment Date(L)|(F)|...|6/1/2025(C6)|...">
+<COLUMN-E; row1="V3(D)|Permanent Loan Maturity(L)|(F)|...|1/1/2030(C6)|...">
+
+<!-- Bridge loan debt reconciliation -->
+<LABELH3; row1="(D)|~Bridge Loan:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<BEGIN-S; driver1="V_BEG_BRIDGE"; row1="V_BEG_BRIDGE(D)|Beginning Balance(L)|is: liability(F)|...">
+<FORMULA-S; customformula="cd{6-Amount}*ONETIMEDATE(cd{6-V1})" row1="...|Bridge Loan Borrowing(L)|is: liability(F)|...">
+<FORMULA-S; customformula="-sumtable(rd{V_BEG_BRIDGE})*ONETIMEDATE(cd{6-V2})" row1="...|Bridge Loan Repayment(L)|is: liability(F)|...">
+<END-S; driver1="V_BEG_BRIDGE"; row1="V_END_BRIDGE(D)|Bridge Loan(L)|is: liability(F)|...">
+
+<!-- Permanent loan debt reconciliation -->
+<LABELH3; row1="(D)|~Permanent Loan:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<BEGIN-S; driver1="V_END_PERM"; row1="V_BEG_PERM(D)|Beginning Balance(L)|is: liability(F)|...">
+<FORMULA-S; customformula="rd{BridgeRepayment}*ONETIMEDATE(cd{6-V2})" row1="...|Permanent Loan Borrowing(L)|is: liability(F)|...">
+<FORMULA-S; customformula="-sumtable(rd{V_BEG_PERM})*ONETIMEDATE(cd{6-V3})" row1="...|Permanent Loan Repayment(L)|is: liability(F)|...">
+<END-S; driver1="V_BEG_PERM"; row1="V_END_PERM(D)|Permanent Loan(L)|is: liability(F)|...">
+```
+
+#### **Acquisition Financing Refinancing:**
+```
+<!-- Shared dates -->
+<COLUMN-E; row1="V1(D)|Acquisition Date(L)|(F)|...|3/1/2025(C6)|...">
+<COLUMN-E; row1="V2(D)|Refinancing Date(L)|(F)|...|3/1/2027(C6)|...">
+
+<!-- Acquisition loan debt reconciliation -->
+<LABELH3; row1="(D)|~Acquisition Loan:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<BEGIN-S; driver1="V_END_ACQ"; row1="V_BEG_ACQ(D)|Beginning Balance(L)|is: liability(F)|...">
+<FORMULA-S; customformula="cd{6-AcqAmount}*ONETIMEDATE(cd{6-V1})" row1="...|Acquisition Loan Borrowing(L)|is: liability(F)|...">
+<FORMULA-S; customformula="-sumtable(rd{V_BEG_ACQ})*ONETIMEDATE(cd{6-V2})" row1="...|Acquisition Loan Repayment(L)|is: liability(F)|...">
+<END-S; driver1="V_BEG_ACQ"; row1="V_END_ACQ(D)|Acquisition Loan(L)|is: liability(F)|...">
+
+<!-- Refinance loan debt reconciliation -->
+<LABELH3; row1="(D)|~Refinance Loan:(L)|(F)|(C1)|(C2)|(C3)|(C4)|(C5)|(C6)|(Y1)|(Y2)|(Y3)|(Y4)|(Y5)|(Y6)|";>
+<BEGIN-S; driver1="V_END_REF"; row1="V_BEG_REF(D)|Beginning Balance(L)|is: liability(F)|...">
+<FORMULA-S; customformula="rd{AcqRepayment}*ONETIMEDATE(cd{6-V2})" row1="...|Refinance Loan Borrowing(L)|is: liability(F)|...">
+<END-S; driver1="V_BEG_REF"; row1="V_END_REF(D)|Refinance Loan(L)|is: liability(F)|...">
+```
+
+### **🔍 VALIDATION CHECKLIST FOR REFINANCING:**
+
+Before finalizing any refinancing model:
+
+1. **❓ Are there any duplicate date assumptions?**
+   - Look for multiple COLUMN-E codes with the same date value
+   - Consolidate duplicates into shared assumptions
+
+2. **❓ Do repayment and borrowing dates match for refinancing?**
+   - Old loan repayment date = New loan borrowing date
+   - Both should reference the same date driver
+
+3. **❓ Can I change the refinancing date in one place?**
+   - Test: Change the shared date assumption
+   - Verify: Both old loan repayment and new loan borrowing update
+
+4. **❓ Are all ONETIMEDATE references correct?**
+   - Each formula should reference the appropriate shared date driver
+   - No hardcoded dates in formulas
+
+5. **❓ Is the debt reconciliation sequence logical?**
+   - Old loan should have positive balance before repayment
+   - New loan should start borrowing after old loan repayment
+   - Cash flows should net to zero for the refinancing transaction
+
+6. **❓ Are related assumptions properly grouped?**
+   - Group shared dates together in the model
+   - Label clearly to show their relationship
+   - Order logically (chronological sequence)
+
+### **⚠️ WARNING SIGNS OF POOR DATE LINKING:**
+
+❌ **Multiple date assumptions with identical values**
+
+## DEBT VALIDATION CHECKLIST
+
+### **For All Debt/Loan Structures:**
+1. **✅ Balance Sheet Category**: Verify liabilities (borrowing) vs assets (lending)
+2. **✅ Driver Linking**: Ensure BEGIN-S and END-S reference each other
+3. **✅ LABELH3 Format**: Label equals END-S item name + ":"
+4. **✅ Interest Calculations**: Always placed OUTSIDE reconciliation table
+5. **✅ Sign Conventions**: Positive for increases, negative for decreases
+6. **✅ Interest Formulas**: Use rd{} or cd{} with proper timing references
+7. **✅ Cash Flow Classifications**: CFF for borrowing, CFI for lending
+8. **✅ Fincode Requirements**: Use absolute value + negative attribute, NOT negative formulas
+9. **✅ Hardcoded Assumptions**: NEVER hardcode rates, percentages, or divisors in customformula
+10. **✅ Assumption Externalization**: All assumptions in separate CONST-E/COLUMN-E/SPREAD-E codes
+
+### **Fincode Handling Verification:**
+✅ **BORROWING (Liabilities)**:
+- CF: CFF fincodes DIRECTLY in reconciliation table items
+- Interest expense = NEGATIVE value
+
+✅ **LENDING (Assets)**:
+- NO fincodes in reconciliation table items
+- DIRECT-S codes with negative="true" OUTSIDE table with CF: CFI fincodes
+- Interest income = POSITIVE value
+❌ **Separate borrowing/repayment dates for the same refinancing event**  
+❌ **Hardcoded dates in ONETIMEDATE functions**
+❌ **Date changes requiring updates in multiple places**
+❌ **Inconsistent timing between related debt events**
+❌ **Cash flow mismatches during refinancing periods**
+
+If you see any of these warning signs, stop and redesign the date assumption structure using the linking principles above. 

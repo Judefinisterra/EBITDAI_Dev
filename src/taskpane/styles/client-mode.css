@@ -1,0 +1,763 @@
+/* ==============================================
+   CLIENT MODE STYLES - Clean Architecture
+   ==============================================
+   
+   Table of Contents:
+   1. CSS Variables (Theme)
+   2. Layout Structure
+   3. Header
+   4. Main Content Area
+   5. Welcome Screen
+   6. Chat Messages
+   7. Input Area
+   8. Footer
+   9. Utilities
+   10. Responsive Design
+   
+   ============================================== */
+
+/* ==============================================
+   1. CSS VARIABLES - Easy theme customization
+   ============================================== */
+:root {
+  /* Colors */
+  --color-black: #000000;
+  --color-white: #ffffff;
+  --color-red: #ff0000;
+  --color-gray-light: #f5f5f5;
+  --color-gray-medium: #e0e0e0;
+  --color-gray-dark: #666666;
+  --color-text-primary: #1a1a1a;
+  --color-text-secondary: #666666;
+  --color-text-placeholder: #8e8ea0;
+  --color-input-bg: #f4f4f4;
+  --color-input-border: #d9d9e3;
+  
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  
+  /* Typography */
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-size-sm: 12px;
+  --font-size-base: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 28px;
+  
+  /* Layout */
+  --header-height: 48px;
+  --footer-height: 32px;
+  --input-area-padding: 16px;
+  --max-content-width: 700px;
+  
+  /* Borders & Radius */
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 16px;
+  --border-radius-full: 24px;
+}
+
+/* ==============================================
+   2. LAYOUT STRUCTURE - Main container setup
+   ============================================== */
+#client-mode-view {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--color-white);
+  font-family: var(--font-family);
+}
+
+/* Hide unnecessary elements */
+.sidebar,
+.client-app-layout {
+  display: none !important;
+}
+
+/* ==============================================
+   3. HEADER - Fixed top navigation
+   ============================================== */
+.fixed-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--header-height);
+  background-color: var(--color-black);
+  color: var(--color-white);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--spacing-md);
+  z-index: 100;
+}
+
+/* Hamburger Menu Button */
+.hamburger-button {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--color-white);
+  cursor: pointer;
+  border-radius: var(--border-radius-sm);
+  margin-right: var(--spacing-md);
+}
+
+.hamburger-button:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Header Title */
+.header-center {
+  flex: 1;
+  text-align: center;
+}
+
+.header-title {
+  font-size: var(--font-size-lg);
+  font-weight: 500;
+  margin: 0;
+  transition: opacity 0.2s ease;
+}
+
+.header-title:hover {
+  opacity: 0.8;
+}
+
+.title-white {
+  color: var(--color-white);
+}
+
+.title-red {
+  color: var(--color-red);
+  font-weight: 700;
+}
+
+/* Account modal quick stats */
+.account-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--spacing-md);
+  margin: var(--spacing-md) 0;
+}
+
+.account-stat {
+  background: #f7f7f8;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: var(--spacing-sm) var(--spacing-md);
+}
+
+.account-stat .stat-label {
+  display: block;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.account-stat .stat-value {
+  font-size: 16px;
+  color: #111827;
+  font-weight: 600;
+}
+
+/* Mode Dropdown */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.mode-dropdown, .model-dropdown {
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  padding: 4px 8px;
+  border-radius: var(--border-radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+  margin-right: 8px;
+}
+
+.mode-dropdown option, .model-dropdown option {
+  background-color: var(--color-black);
+  color: var(--color-white);
+}
+
+.model-dropdown {
+  min-width: 100px;
+}
+
+.mode-dropdown:hover, .model-dropdown:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.mode-dropdown:focus, .model-dropdown:focus {
+  background-color: var(--color-black);
+  outline: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+/* Compose Button */
+.compose-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  color: var(--color-white);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: var(--border-radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0;
+}
+
+.compose-button:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.8);
+}
+
+.compose-button:active {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.compose-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Header Responsive Behavior */
+@media (max-width: 400px) {
+  .header-center {
+    display: none;
+  }
+  
+  .header-right {
+    margin-left: auto;
+  }
+}
+
+/* @media (max-width: 400px) {
+  .mode-label {
+    display: none;
+  }
+  
+  .mode-dropdown {
+    font-size: 14px;
+    padding: 4px 8px;
+  }
+  
+  .compose-button {
+    width: 32px;
+    height: 32px;
+  }
+  
+  .compose-icon {
+    width: 18px;
+    height: 18px;
+  }
+} */
+
+/* ==============================================
+   4. MAIN CONTENT AREA - Flexible container
+   ============================================== */
+.main-content {
+  position: absolute;
+  top: var(--header-height);
+  bottom: var(--footer-height);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: var(--color-gray-light);
+}
+
+#client-chat-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ==============================================
+   5. WELCOME SCREEN - Initial instructions
+   ============================================== */
+.welcome-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-xl) var(--spacing-lg);
+  overflow-y: auto;
+}
+
+.welcome-title {
+  font-size: var(--font-size-2xl);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-xl);
+  text-align: center;
+}
+
+.welcome-steps {
+  max-width: 500px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+}
+
+.step-number {
+  width: 32px;
+  height: 32px;
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: var(--font-size-lg);
+  flex-shrink: 0;
+}
+
+.step-text {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-lg);
+  line-height: 1.6;
+}
+
+/* ==============================================
+   6. CHAT MESSAGES - Conversation display
+   ============================================== */
+#chat-log-client {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--spacing-lg);
+  display: none;
+  margin: 0;
+  min-height: 0; /* Important for flexbox overflow */
+}
+
+/* Show/hide based on conversation state */
+#client-chat-container.conversation-active .welcome-section {
+  display: none;
+}
+
+#client-chat-container.conversation-active #chat-log-client {
+  display: block;
+}
+
+/* Message Styles */
+.chat-message {
+  margin-bottom: var(--spacing-md);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+}
+
+.chat-message.user-message {
+  justify-content: flex-end;
+}
+
+.chat-message.assistant-message {
+  justify-content: flex-start;
+}
+
+.message-content {
+  max-width: 70%;
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius-lg);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+}
+
+.user-message .message-content {
+  background-color: var(--color-black);
+  color: var(--color-white);
+}
+
+.assistant-message .message-content {
+  background-color: var(--color-white);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-gray-medium);
+}
+
+/* ==============================================
+   7. INPUT AREA - Message composition
+   ============================================== */
+.client-input-area-wrapper {
+  background-color: var(--color-white);
+  border-top: 1px solid var(--color-gray-medium);
+  padding: var(--spacing-md);
+  flex-shrink: 0;
+}
+
+/* Input Bar Container */
+.chatgpt-input-bar {
+  max-width: var(--max-content-width);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: row; /* Default: horizontal layout */
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  background-color: var(--color-input-bg);
+  border-radius: var(--border-radius-full);
+  border: 1px solid var(--color-input-border);
+  overflow: hidden;
+  min-height: 48px;
+  height: auto;
+  transition: all 0.2s ease;
+}
+
+/* Multiline state: stack vertically */
+.chatgpt-input-bar.multiline {
+  flex-direction: column;
+  align-items: stretch;
+  /* Keep same border-radius as single-line state */
+}
+
+/* Default state: inline layout */
+.input-mode {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: auto;
+  min-height: 48px;
+  gap: 0;
+  transition: all 0.2s ease;
+}
+
+/* Multiline state: switch to CSS Grid layout */
+.chatgpt-input-bar.multiline .input-mode {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  grid-template-rows: auto auto;
+  grid-template-areas: 
+    "textarea textarea textarea"
+    "left-controls . right-controls";
+  gap: 8px;
+  padding: 8px;
+  align-items: start;
+}
+
+/* Grid area assignments for multiline layout */
+.chatgpt-input-bar.multiline #user-input-client {
+  grid-area: textarea;
+  width: 100%;
+}
+
+.chatgpt-input-bar.multiline .left-controls {
+  grid-area: left-controls;
+  justify-self: start;
+}
+
+.chatgpt-input-bar.multiline .right-controls {
+  grid-area: right-controls;
+  justify-self: end;
+}
+
+/* Controls - Default inline state */
+.left-controls,
+.right-controls {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--spacing-sm);
+}
+
+/* In multiline state, controls become part of actions row */
+.chatgpt-input-bar.multiline .left-controls,
+.chatgpt-input-bar.multiline .right-controls {
+  padding: 0;
+}
+
+/* Attachment Button */
+#attach-file-client {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-black);
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
+}
+
+#attach-file-client:hover {
+  opacity: 1;
+}
+
+/* Text Input - Default inline state */
+#user-input-client {
+  flex: 1;
+  padding: 10px 12px;
+  border: none;
+  outline: none;
+  font-size: var(--font-size-base);
+  line-height: 24px;
+  background: transparent;
+  color: var(--color-black);
+  font-family: var(--font-family);
+  resize: none;
+  overflow-y: hidden;
+  box-sizing: border-box;
+  min-height: 44px;
+  max-height: 116px;
+  transition: all 0.2s ease;
+  vertical-align: middle;
+}
+
+/* Text Input - Multiline state */
+.chatgpt-input-bar.multiline #user-input-client {
+  width: 100%;
+  flex: none; /* Remove flex to allow full width */
+  margin: 0; /* Remove any margins */
+  min-height: 60px; /* Taller minimum for multiline */
+}
+
+#user-input-client::placeholder {
+  color: var(--color-text-placeholder);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* No scrolling needed for single-line input */
+
+/* Remove focus outline */
+#user-input-client:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* Also remove any potential highlights on hover */
+#user-input-client:hover {
+  outline: none;
+  box-shadow: none;
+}
+
+/* When textarea is expanded beyond max height, show scrollbar */
+#user-input-client.scrollable {
+  overflow-y: auto;
+}
+
+/* When input area has multiple lines, adjust alignment */
+.chatgpt-input-bar.expanded .input-mode {
+  align-items: flex-end;
+}
+
+.chatgpt-input-bar.expanded .left-controls,
+.chatgpt-input-bar.expanded .right-controls {
+  align-items: flex-end;
+  padding-bottom: 10px; /* Match textarea bottom padding */
+}
+
+/* Voice Button */
+#voice-input-client {
+  width: 32px; /* Increased size for better visibility */
+  height: 32px;
+  padding: 4px; /* Add some padding */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent; /* No visible border by default */
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--color-black);
+  opacity: 0.7;
+  transition: all 0.2s ease;
+}
+
+#voice-input-client:hover {
+  opacity: 1;
+  background-color: rgba(0, 0, 0, 0.05);
+  border-color: var(--color-input-border); /* Show ring on hover */
+}
+
+#voice-input-client .microphone-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Send Button */
+#send-client {
+  width: 32px;
+  height: 32px;
+  margin: 0 6px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--color-black);
+  color: var(--color-white);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+  flex-shrink: 0;
+}
+
+#send-client:hover:not(:disabled) {
+  opacity: 0.8;
+}
+
+#send-client:disabled {
+  background-color: var(--color-gray-medium);
+  cursor: not-allowed;
+}
+
+/* Icon Sizing */
+.plus-icon,
+.microphone-icon,
+.send-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Override Office UI Fabric styles */
+.ms-Button.attachment-button,
+.ms-Button.voice-button,
+.ms-Button.send-button {
+  background: transparent !important;
+  border: none !important;
+  min-width: unset !important;
+  min-height: unset !important;
+  padding: 0 !important;
+}
+
+/* ==============================================
+   8. FOOTER - Fixed bottom info bar
+   ============================================== */
+.fixed-footer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: var(--footer-height);
+  background-color: var(--color-black);
+  color: var(--color-white);
+  display: flex;
+  align-items: center;
+  z-index: 100;
+}
+
+.footer-content {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--spacing-md);
+  font-size: var(--font-size-sm);
+}
+
+.footer-left,
+.footer-center,
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.credits-label,
+.subscription-label {
+  color: #cccccc;
+}
+
+.credits-value,
+.subscription-value {
+  color: var(--color-white);
+  font-weight: 600;
+}
+
+/* ==============================================
+   9. UTILITIES - Reusable classes
+   ============================================== */
+.hidden {
+  display: none !important;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-gray-light);
+  border-top-color: var(--color-black);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ==============================================
+   10. RESPONSIVE DESIGN - Mobile adjustments
+   ============================================== */
+@media (max-width: 480px) {
+  .welcome-title {
+    font-size: 24px;
+  }
+  
+  /* Keep step-text font size constant */
+  /* .step-text font size remains at var(--font-size-lg) */
+  
+  .message-content {
+    max-width: 85%;
+  }
+}
+
+/* ==============================================
+   SLIDE MENU - Hidden by default
+   ============================================== */
+.slide-menu {
+  position: fixed;
+  top: 0;
+  left: -300px;
+  width: 300px;
+  height: 100vh;
+  background-color: var(--color-white);
+  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+  transition: left 0.3s ease;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+}
+
+.slide-menu.open {
+  left: 0;
+}
+
+/* Voice recording and other modes hidden by default */
+#voice-recording-mode,
+#transcription-loading-mode,
+#attached-files-container,
+#low-credits-warning,
+#loading-animation-client {
+  display: none;
+}

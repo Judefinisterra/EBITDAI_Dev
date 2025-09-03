@@ -1,0 +1,32 @@
+# API Key configuration files
+.env
+.env.local
+.env.production
+.env.development
+
+# Authentication files (if any)
+src/auth/secrets/
+**/secrets.js
+**/secrets.json
+config/auth.js
+
+# Dependencies
+node_modules/
+
+# Excel temporary files
+~$*.xls*
+*.xls#
+*.xls~
+*.xlsx#
+*.xlsx~ 
+
+# Output files
+output.json 
+dist/taskpane.js 
+dist/taskpane.js.map
+dist/taskpane.css
+dist/taskpane.css.map
+
+# Ignore all files in the dist directory
+dist/
+.vercel

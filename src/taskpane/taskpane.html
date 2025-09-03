@@ -1,0 +1,695 @@
+<!-- Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT License. -->
+<!-- This file shows how to design a first-run page that provides a welcome screen to the user about the features of the add-in. -->
+
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Projectify Task Pane</title>
+
+    <!-- Office JavaScript API -->
+    <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+    
+    <!-- Suppress Office.js initialization errors -->
+    <script type="text/javascript">
+        // Catch unhandled promise rejections (for the RichApiMessageEvent error)
+        window.addEventListener('unhandledrejection', function(event) {
+            if (event.reason && event.reason.message && event.reason.message.includes('RichApiMessageEvent')) {
+                event.preventDefault();
+                return true;
+            }
+            // Also catch TypeError about undefined properties
+            if (event.reason && event.reason instanceof TypeError && 
+                event.reason.message && event.reason.message.includes("Cannot read properties of undefined")) {
+                console.warn('Suppressed Office.js initialization error - this is expected and safe to ignore');
+                event.preventDefault();
+                return true;
+            }
+        });
+        
+        // Also catch regular errors
+        window.addEventListener('error', function(event) {
+            if (event.message && event.message.includes('RichApiMessageEvent')) {
+                event.preventDefault();
+                return true;
+            }
+        });
+    </script>
+
+    <!-- SheetJS -->
+    <script type="text/javascript" src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+
+    <!-- Mammoth.js for Word document processing -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+    
+    <!-- Google Sign-In Library removed - standalone mode -->
+
+    <!-- PDF.js for PDF document processing -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+
+
+    <!-- For more information on Fluent UI, visit https://developer.microsoft.com/fluentui#/. -->
+    <link rel="stylesheet" href="https://static2.sharepointonline.com/files/fabric/office-ui-fabric-core/11.0.0/css/fabric.min.css"/>
+
+    <!-- Modular CSS Structure -->
+    <!-- 1. Variables and Design Tokens (must be first) -->
+    <link href="styles/variables.css" rel="stylesheet" type="text/css" />
+    
+    <!-- 2. Reset and Base Styles -->
+    <link href="styles/reset.css" rel="stylesheet" type="text/css" />
+    <link href="styles/base.css" rel="stylesheet" type="text/css" />
+    
+    <!-- 3. Typography -->
+    <link href="styles/typography.css" rel="stylesheet" type="text/css" />
+    
+    <!-- 4. Layout Utilities -->
+    <link href="styles/layout.css" rel="stylesheet" type="text/css" />
+    <link href="styles/utilities.css" rel="stylesheet" type="text/css" />
+    
+    <!-- 5. Components -->
+    <link href="styles/components/buttons.css" rel="stylesheet" type="text/css" />
+    <link href="styles/components/forms.css" rel="stylesheet" type="text/css" />
+    <link href="styles/components/header-footer.css" rel="stylesheet" type="text/css" />
+    <link href="styles/components/slide-menu.css" rel="stylesheet" type="text/css" />
+    <link href="styles/components/voice-input.css" rel="stylesheet" type="text/css" />
+    <link href="styles/components/loading-animation.css" rel="stylesheet" type="text/css" />
+    <link href="styles/modals.css" rel="stylesheet" type="text/css" />
+    
+    <!-- 6. View-Specific Styles (most specific, loaded last) -->
+
+    <!-- Authentication CSS removed - standalone mode -->
+    <link href="styles/client-mode.css" rel="stylesheet" type="text/css" />
+    <link href="styles/developer-mode.css" rel="stylesheet" type="text/css" />
+</head>
+
+<body class="ms-Fabric" dir="ltr">
+    <div id="sideload-msg" class="ms-Rule ms-font-xl">
+        <p>Please <a target="_blank" href="https://learn.microsoft.com/office/dev/add-ins/testing/sideload-office-add-ins-for-testing" rel="noopener">sideload</a> your add-in to see app body.</p>
+    </div>
+
+
+
+    <!-- Authentication View removed - standalone mode -->
+
+    <!-- Subscription Welcome View removed - standalone mode -->
+
+    <main id="app-body" class="ms-welcome__main" style="display: none;">
+        <!-- Developer Mode Header -->
+        <header class="dev-mode-header">
+            <button id="back-to-client-dev-button" class="ms-Button back-to-menu-button">
+                <span class="ms-Button-label">← Back to Client Mode</span>
+            </button>
+            
+            <div class="dev-header-right">
+                <div class="model-dropdown-wrapper">
+                    <select id="dev-model-dropdown" class="model-dropdown">
+                        <option value="claude-opus-4-1-20250805">Claude 4.1</option>
+                        <option value="claude-opus-4-20250514">Claude Opus 4</option>
+                    </select>
+                    <div class="model-tooltips">
+                        <span class="model-tooltip" data-model="claude-opus-4-1-20250805">
+                            <span class="tooltip-icon">?</span>
+                            <span class="tooltip-text">Smartest</span>
+                        </span>
+                        <span class="model-tooltip" data-model="claude-opus-4-20250514">
+                            <span class="tooltip-icon">?</span>
+                            <span class="tooltip-text">Fastest</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <div class="container">
+            <!-- Chat Interface -->
+            <div id="chat-log" class="chat-log">
+                <div id="welcome-message" class="welcome-message">
+                    <!-- Welcome message removed for dev mode -->
+                </div>
+            </div>
+            <div class="input-area">
+                <div class="dev-input-bar" id="dev-input-bar">
+                    <!-- Normal Input Mode -->
+                    <div id="normal-input-mode-dev" class="input-mode">
+                        <div class="left-controls">
+                            <input type="file" id="file-input-dev" accept=".xlsx,.xls,.xlsm,.csv,.doc,.docx,.pdf,.txt" multiple style="display: none;">
+                            <button id="attach-file-dev" class="ms-Button ms-Button--icon attachment-button" title="Attach Excel, CSV, Word, PDF, or Text file">
+                                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="plus-icon">
+                                    <path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <textarea id="user-input" placeholder="Enter your request here..." rows="1"></textarea>
+                        <div class="right-controls">
+                            <button id="voice-input-dev" class="ms-Button ms-Button--icon voice-button" title="Voice input">
+                                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="microphone-icon">
+                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                                    <path d="M12 19v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path d="M8 23h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                            <button id="send" class="ms-Button ms-Button--primary">
+                                <span class="ms-Button-label">Send</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Voice Recording Mode -->
+                    <div id="voice-recording-mode-dev" class="input-mode" style="display: none;">
+                        <div class="voice-waveform-container">
+                            <canvas id="voice-waveform-dev" class="voice-waveform"></canvas>
+                            <div id="voice-recording-timer-dev" class="voice-recording-timer">00:00</div>
+                        </div>
+                        <div class="voice-recording-controls">
+                            <button id="cancel-voice-recording-dev" class="ms-Button ms-Button--icon voice-control-button" title="Cancel recording">
+                                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="cancel-icon">
+                                    <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                            <button id="accept-voice-recording-dev" class="ms-Button ms-Button--icon voice-control-button" title="Send for transcription">
+                                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="check-icon">
+                                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Transcription Loading Mode -->
+                    <div id="transcription-loading-mode-dev" class="input-mode" style="display: none;">
+                        <div class="transcription-loading-content">
+                            <div class="transcription-spinner"></div>
+                            <span class="transcription-loading-text">Transcribing...</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Attached Files Container for Developer Mode -->
+                <div id="attached-files-container-dev" class="attached-files-container" style="display: none;">
+                    <div class="attached-files-header">
+                        <span class="attached-files-count-dev">0 files attached</span>
+                        <button id="clear-all-attachments-dev" class="clear-all-button" title="Clear all attachments">Clear all</button>
+                    </div>
+                    <div id="attached-files-list-dev" class="attached-files-list">
+                        <!-- File items will be dynamically added here -->
+                    </div>
+                </div>
+                
+                <div id="loading-animation" class="loading-animation"></div>
+                <button id="write-to-excel" class="ms-Button">
+                    <span class="ms-Button-label">Write Response to Excel</span>
+                </button>
+                <button id="insert-to-editor" class="ms-Button">
+                    <span class="ms-Button-label">Insert to Editor</span>
+                </button>
+                <button id="reset-chat" class="ms-Button">
+                    <span class="ms-Button-label">Reset Chat</span>
+                </button>
+                <button id="add-to-training-queue" class="ms-Button">
+                    <span class="ms-Button-label">Add to Training Data Queue</span>
+                </button>
+                <button id="clear-training-data-que-button" class="ms-Button">
+                    <span class="ms-Button-label">Clear Training Data Queue</span>
+                </button>
+                <button id="attach-actuals-button" class="ms-Button">
+                    <span class="ms-Button-label">Attach Actuals</span>
+                </button>
+            </div>
+
+            <!-- Code Area -->
+            <div class="code-area">
+                <div class="code-header">
+                    <h2>Codes</h2>
+                    <button id="fullscreen-toggle" class="fullscreen-toggle" title="Toggle fullscreen">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                        </svg>
+                    </button>
+                </div>
+                <!-- >>> REMOVED: Main search and replace UI container <<< -->
+                <!--
+                <div class="search-replace-container">
+                    <input type="text" id="search-input" placeholder="Search Codes">
+                    <input type="text" id="replace-input" placeholder="Replace With">
+                    <button id="find-next-button" class="ms-Button">
+                        <span class="ms-Button-label">Find Next</span>
+                    </button>
+                    <button id="replace-button" class="ms-Button">
+                        <span class="ms-Button-label">Replace</span>
+                    </button>
+                    <button id="replace-all-button" class="ms-Button">
+                        <span class="ms-Button-label">Replace All</span>
+                    </button>
+                    <div class="search-options">
+                        <input type="checkbox" id="search-selection-only">
+                        <label for="search-selection-only">Selection Only</label>
+                    </div>
+                    <button id="clear-search-button" class="ms-Button">
+                        <span class="ms-Button-label">Clear</span>
+                    </button>
+                    <span id="search-status" class="search-status"></span>
+                </div>
+                -->
+                <div id="codes-textarea" contenteditable="true" class="code-editor" data-placeholder="Code strings will appear here after generation or can be pasted..."></div>
+                <div id="dynamic-suggestions-container" class="code-suggestions"></div>
+                <div class="code-area-buttons">
+                    <button id="edit-code-params-button" class="ms-Button">
+                        <span class="ms-Button-label">Edit Params</span>
+                    </button>
+                    <button id="insert-and-run" class="ms-Button ms-Button--primary">
+                        <span class="ms-Button-label">Run Codes</span>
+                    </button>
+                    <button id="generate-tab-string-button" class="ms-Button">
+                        <span class="ms-Button-label">Generate Tab Index</span>
+                    </button>
+                    <button id="ai-editor-button" class="ms-Button">
+                        <span class="ms-Button-label">🤖 AI Editor</span>
+                    </button>
+                    <button id="fullscreen-toggle-button" class="ms-Button">
+                        <span class="ms-Button-label">⛶ Fullscreen</span>
+                    </button>
+                    <button id="restore-backup-button" class="ms-Button" style="display: none;">
+                        <span class="ms-Button-label">↶ Restore Backup</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Fullscreen Code Editor Modal -->
+            <div id="fullscreen-modal" class="fullscreen-modal" style="display: none;">
+                <div class="fullscreen-header">
+                    <h2>Code Editor - Fullscreen</h2>
+                    <button id="fullscreen-close-button" class="close-button">✕</button>
+                </div>
+                <div class="fullscreen-content">
+                    <div id="fullscreen-codes-textarea" contenteditable="true" class="code-editor fullscreen-editor" data-placeholder="Code strings will appear here after generation or can be pasted..."></div>
+                    <div id="fullscreen-suggestions-container" class="code-suggestions"></div>
+                </div>
+            </div>
+
+            <!-- Code Parameters Modal -->
+            <div id="code-params-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close-button">&times;</span>
+                    <h2>Edit Code Parameters</h2>
+                    <div class="modal-find-replace">
+                        <input type="text" id="modal-find-input" placeholder="Find in Params">
+                        <input type="text" id="modal-replace-input" placeholder="Replace With">
+                        <button id="modal-replace-all-button" class="ms-Button">Replace All</button>
+                        <span id="modal-search-status"></span>
+                    </div>
+                    <form id="code-params-modal-form">
+                        <!-- Parameters will be populated here by JS -->
+                    </form>
+                    <div class="modal-actions">
+                        <button id="apply-code-params-button" class="ms-Button ms-Button--primary">Apply</button>
+                        <button id="cancel-code-params-button" class="ms-Button">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Training Data Modal -->
+            <div id="training-data-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close-button">&times;</span>
+                    <h2>Edit Training Data</h2>
+                    <div class="modal-find-replace">
+                        <input type="text" id="training-find-input" placeholder="Find in Training Data">
+                        <input type="text" id="training-replace-input" placeholder="Replace With">
+                        <button id="training-replace-all-button" class="ms-Button">Replace All</button>
+                        <span id="training-search-status"></span>
+                    </div>
+                    <div class="training-data-form">
+                        <div class="training-field">
+                            <label for="training-user-input">Client Message:</label>
+                            <div class="training-input-container">
+                                <textarea id="training-user-input" rows="4" placeholder="Enter the client's original message... (Ctrl+V or right-click to paste)"></textarea>
+                                <button id="voice-input-training-user" class="ms-Button ms-Button--icon voice-button training-voice-button" title="Voice input for client message">
+                                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="microphone-icon">
+                                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                                        <path d="M12 19v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <path d="M8 23h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
+                                Tip: You can paste text using Ctrl+V (Windows) or Cmd+V (Mac), or right-click and select Paste. Use the microphone for voice input.
+                            </small>
+                            
+                            <!-- Voice Recording Mode for Client Message -->
+                            <div id="voice-recording-mode-training-user" class="training-voice-mode" style="display: none;">
+                                <div class="voice-waveform-container">
+                                    <canvas id="voice-waveform-training-user" class="voice-waveform"></canvas>
+                                    <div id="voice-recording-timer-training-user" class="voice-recording-timer">00:00</div>
+                                </div>
+                                <div class="voice-recording-controls">
+                                    <button id="cancel-voice-recording-training-user" class="ms-Button ms-Button--icon voice-control-button" title="Cancel recording">
+                                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="cancel-icon">
+                                            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </button>
+                                    <button id="accept-voice-recording-training-user" class="ms-Button ms-Button--icon voice-control-button" title="Send for transcription">
+                                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="check-icon">
+                                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Transcription Loading Mode for Client Message -->
+                            <div id="transcription-loading-mode-training-user" class="training-voice-mode" style="display: none;">
+                                <div class="transcription-loading-content">
+                                    <div class="transcription-spinner"></div>
+                                    <span class="transcription-loading-text">Transcribing...</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="training-field">
+                            <label for="training-ai-response">AI Response:</label>
+                            <div class="training-input-container">
+                                <textarea id="training-ai-response" rows="8" placeholder="Enter the AI's response... (Ctrl+V or right-click to paste)"></textarea>
+                                <button id="voice-input-training-ai" class="ms-Button ms-Button--icon voice-button training-voice-button" title="Voice input for AI response">
+                                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="microphone-icon">
+                                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                                        <path d="M12 19v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <path d="M8 23h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
+                                Tip: You can paste text using Ctrl+V (Windows) or Cmd+V (Mac), or right-click and select Paste. Use the microphone for voice input.
+                            </small>
+                            
+                            <!-- Voice Recording Mode for AI Response -->
+                            <div id="voice-recording-mode-training-ai" class="training-voice-mode" style="display: none;">
+                                <div class="voice-waveform-container">
+                                    <canvas id="voice-waveform-training-ai" class="voice-waveform"></canvas>
+                                    <div id="voice-recording-timer-training-ai" class="voice-recording-timer">00:00</div>
+                                </div>
+                                <div class="voice-recording-controls">
+                                    <button id="cancel-voice-recording-training-ai" class="ms-Button ms-Button--icon voice-control-button" title="Cancel recording">
+                                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="cancel-icon">
+                                            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </button>
+                                    <button id="accept-voice-recording-training-ai" class="ms-Button ms-Button--icon voice-control-button" title="Send for transcription">
+                                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="check-icon">
+                                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Transcription Loading Mode for AI Response -->
+                            <div id="transcription-loading-mode-training-ai" class="training-voice-mode" style="display: none;">
+                                <div class="transcription-loading-content">
+                                    <div class="transcription-spinner"></div>
+                                    <span class="transcription-loading-text">Transcribing...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button id="save-training-data-button" class="ms-Button ms-Button--primary">Add to Queue</button>
+                        <button id="cancel-training-data-button" class="ms-Button">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- AI Editor Modal -->
+            <div id="ai-editor-modal" class="modal">
+                <div class="modal-content">
+                    <span class="close-button">&times;</span>
+                    <h2>🤖 AI Editor</h2>
+                    <div class="ai-editor-content">
+                        <p>Describe the changes you want to make to the code. The AI will analyze the current code content and apply your requested modifications.</p>
+                        <div class="ai-editor-input">
+                            <label for="ai-editor-instructions">What changes would you like to make?</label>
+                            <div class="ai-editor-input-container">
+                                <textarea id="ai-editor-instructions" rows="4" placeholder="Example: change all CONST-E codes to SPREAD-E, or add validation to all formulas, etc."></textarea>
+                                <button id="voice-input-ai-editor" class="ms-Button ms-Button--icon voice-button ai-editor-voice-button" title="Voice input for instructions">
+                                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="microphone-icon">
+                                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
+                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                                        <path d="M12 19v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        <path d="M8 23h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            
+                            <!-- Voice Recording Mode for AI Editor -->
+                            <div id="voice-recording-mode-ai-editor" class="ai-editor-voice-mode" style="display: none;">
+                                <div class="voice-waveform-container">
+                                    <canvas id="voice-waveform-ai-editor" class="voice-waveform"></canvas>
+                                    <div id="voice-recording-timer-ai-editor" class="voice-recording-timer">00:00</div>
+                                </div>
+                                <div class="voice-recording-controls">
+                                    <button id="cancel-voice-recording-ai-editor" class="ms-Button ms-Button--icon voice-control-button" title="Cancel recording">
+                                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="cancel-icon">
+                                            <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                        </svg>
+                                    </button>
+                                    <button id="accept-voice-recording-ai-editor" class="ms-Button ms-Button--icon voice-control-button" title="Send for transcription">
+                                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="check-icon">
+                                            <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Transcription Loading Mode for AI Editor -->
+                            <div id="transcription-loading-mode-ai-editor" class="ai-editor-voice-mode" style="display: none;">
+                                <div class="transcription-loading-content">
+                                    <div class="transcription-spinner"></div>
+                                    <span class="transcription-loading-text">Transcribing...</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="ai-editor-options">
+                            <label>
+                                <input type="checkbox" id="ai-editor-backup-option" checked>
+                                Keep backup of original content (enables restore button)
+                            </label>
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button id="ai-editor-execute-button" class="ms-Button ms-Button--primary">🤖 Apply Changes</button>
+                        <button id="ai-editor-cancel-button" class="ms-Button">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Client Mode View with Sidebar -->
+    <div id="client-mode-view" class="ms-welcome__main" style="display: none;">
+        <!-- Fixed Header -->
+        <header class="fixed-header">
+            <button id="hamburger-menu" class="hamburger-button" aria-label="Menu">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="hamburger-icon">
+                    <path d="M3 12h18M3 6h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+            
+            <div class="header-center">
+                <h1 class="header-title" id="header-title-link" style="cursor: pointer;">
+                    <span class="title-white">EBITD</span><span class="title-red">AI</span>
+                </h1>
+            </div>
+            
+            <div class="header-right">
+                <select id="mode-dropdown" class="mode-dropdown">
+                    <option value="one-shot">One-shot</option>
+                    <option value="limited-guidance">Limited Guidance</option>
+                    <option value="full-guidance">Full Guidance</option>
+                </select>
+                <select id="model-dropdown" class="model-dropdown">
+                    <option value="claude-opus-4-1-20250805">Claude 4.1</option>
+                    <option value="claude-opus-4-20250514">Claude Opus 4</option>
+                </select>
+                <button id="compose-new-message" class="compose-button" title="Start a new conversation">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="compose-icon">
+                        <path d="M20.71 4.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83zM3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="currentColor"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Profile Modal removed - standalone mode -->
+
+        <!-- Slide-out Menu -->
+        <div id="slide-menu" class="slide-menu">
+            <div class="slide-menu-header">
+                <h2>Menu</h2>
+                <button id="close-menu" class="close-menu-button" aria-label="Close menu">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
+            
+            <nav class="slide-menu-nav">
+                <button class="menu-item" data-action="chat">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="menu-icon">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                    </svg>
+                    <span>Chat</span>
+                </button>
+                
+                <button class="menu-item" data-action="developer" style="display: none !important; visibility: hidden !important;">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="menu-icon">
+                        <path d="M16 18l6-6-6-6M8 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                    </svg>
+                    <span>Developer Mode</span>
+                </button>
+                
+                <div class="back-to-home">
+                    <button class="menu-item" data-action="home">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="menu-icon">
+                            <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                        </svg>
+                        <span>Close Menu</span>
+                    </button>
+                </div>
+            </nav>
+        </div>
+        
+        <!-- Account Modal removed - standalone mode -->
+
+
+
+        <!-- Main Content Area -->
+        <div class="main-content">
+            <!-- Chat Container - Holds welcome screen OR chat messages -->
+            <div id="client-chat-container">
+                <!-- Welcome Screen - Shows instructions -->
+                <div class="welcome-section">
+                    <h2 class="welcome-title">What do you want to model?</h2>
+                    <div class="welcome-steps">
+                        <div class="step-item">
+                            <span class="step-number">1</span>
+                            <span class="step-text">Describe your revenue, pricing, expenses, financing, and other key assumptions.</span>
+                        </div>
+                        <div class="step-item">
+                            <span class="step-number">2</span>
+                            <span class="step-text">We'll create a professional Excel model for you</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Messages - Hidden initially, shown when conversation starts -->
+                <div id="chat-log-client">
+                    <!-- Messages will be added here dynamically -->
+                </div>
+            </div>
+                
+            <!-- Input Area - Fixed at bottom above footer -->
+            <div class="client-input-area-wrapper">
+                <div class="chatgpt-input-bar">
+                    <div class="input-mode">
+                        <div class="left-controls">
+                            <input type="file" id="file-input-client" accept=".xlsx,.xls,.xlsm,.csv,.doc,.docx,.pdf,.txt" multiple style="display: none;">
+                            <button id="attach-file-client" class="attachment-button" title="Attach file">
+                                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="plus-icon">
+                                    <path d="M12 5v14m-7-7h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <textarea id="user-input-client" placeholder="Describe your business" rows="1"></textarea>
+                        <div class="right-controls">
+                            <button id="voice-input-client" class="voice-button" title="Voice input">
+                                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="microphone-icon">
+                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" fill="currentColor"/>
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                                    <path d="M12 19v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <path d="M8 23h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                            <button id="send-client" class="send-button">
+                                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="send-icon">
+                                    <path d="M12 6.5L17.5 12L16.09 13.41L13 10.33V17.5H11V10.33L7.91 13.41L6.5 12L12 6.5Z" fill="currentColor"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Voice Recording Mode -->
+                <div id="voice-recording-mode" class="input-mode" style="display: none;">
+                    <div class="voice-waveform-container">
+                        <canvas id="voice-waveform" class="voice-waveform"></canvas>
+                        <div id="voice-recording-timer" class="voice-recording-timer">00:00</div>
+                    </div>
+                    <div class="voice-recording-controls">
+                       <button id="cancel-voice-recording" class="ms-Button ms-Button--icon voice-control-button" title="Cancel recording">
+                            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="cancel-icon">
+                                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                         </button>
+                        <button id="stop-voice-recording" class="ms-Button ms-Button--primary voice-stop-button" title="Stop recording">
+                            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" class="stop-icon">
+                                <rect x="6" y="6" width="12" height="12" fill="currentColor"/>
+                            </svg>
+                            <span>Stop Recording</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Transcription Loading Mode -->
+                <div id="transcription-loading-mode" class="input-mode" style="display: none;">
+                    <div class="transcription-loading-content">
+                        <div class="loading-spinner"></div>
+                        <div class="transcription-loading-text">Transcribing your audio...</div>
+                    </div>
+                </div>
+                
+                <!-- Attached Files Container for Client Mode (animated) -->
+                <div id="attached-files-container" class="attached-files-container" style="display: none;">
+                    <div class="attached-files-header">
+                        <span class="attached-files-count">0 files attached</span>
+                        <button id="clear-all-attachments" class="clear-all-button" title="Clear all attachments">Clear all</button>
+                    </div>
+                    <div id="attached-files-list" class="attached-files-list">
+                        <!-- File items will be dynamically added here -->
+                    </div>
+                </div>
+                <div id="loading-animation-client" class="hidden"></div>
+            </div>
+
+                <!-- Subscription Panel removed - standalone mode -->
+            </div>
+        </div>
+        
+        <!-- Fixed Footer -->
+        <footer class="fixed-footer">
+            <div class="footer-content">
+                <div class="footer-left">
+                    <a href="https://ebitdai.co/terms" class="footer-link" id="terms-link" target="_blank">Terms of Service</a>
+                    <span class="footer-separator">•</span>
+                    <a href="https://ebitdai.co/privacy" class="footer-link" id="privacy-link" target="_blank">Privacy Policy</a>
+                </div>
+                
+                <!-- Removed footer center subscription display -->
+                
+                <div class="footer-right">
+                    <!-- Sign-in button removed -->
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Subscription Plans View removed - standalone mode -->
+
+    <!-- JavaScript Dependencies -->
+    <!-- Webpack will automatically inject the bundled JavaScript files here -->
+    <!-- Subscription plans CSS removed - standalone mode -->
+
+</body>
+
+</html>

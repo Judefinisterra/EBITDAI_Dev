@@ -1,0 +1,234 @@
+The INDEX system is used when modeling unit economics that scale over time based on volume, where each unit follows a lifecycle pattern based on its age rather than calendar dates. This is common for businesses like restaurants, retail stores, subscription cohorts, or any asset that has a maturation curve.
+
+## WHEN TO USE INDEX SYSTEM
+
+Use INDEX when the client describes:
+- Opening/launching units over time (restaurants, stores, franchises, etc.)
+- Each unit having a performance curve based on its age/maturity
+- Scaling unit economics across a volume driver
+- Cohort-based revenue/cost patterns
+- Assets that mature or ramp up over their lifetime
+
+Examples that trigger INDEX usage:
+- "I will open 1 restaurant in January, 2 in March, then 5 per year. Each restaurant generates $1000 in month 1, $2000 in month 2, then $10,000 monthly thereafter."
+- "We'll launch new stores quarterly. Each store loses money for 6 months, then becomes profitable."
+- "New subscription cohorts have different retention curves based on how long they've been customers."
+
+## 🚨 CRITICAL INDEX ISOLATION RULE 🚨
+
+**THE INDEX SYSTEM IS A COMPLETELY ISOLATED BOUNDARY. NO CROSS-BOUNDARY LINKING IS EVER ACCEPTABLE.**
+
+### **The ONLY Acceptable Connection:**
+✅ **driver1 parameter on INDEXBEGIN** - This is the ONLY way to connect external volume driver to INDEX system
+
+### **NEVER ACCEPTABLE - Bidirectional Linking Violations:**
+❌ **FATAL**: External codes referencing drivers inside INDEX block  
+❌ **FATAL**: Internal INDEX codes referencing drivers outside INDEX block  
+❌ **FATAL**: Any driver relationships that cross the INDEX boundary in either direction
+
+### **Examples of FORBIDDEN Linking:**
+
+❌ **WRONG - External referencing internal:**
+```
+<INDEXBEGIN; driver1="V1">
+  <CONST-E; row1="V2(D)|Internal Item(L)|...">
+<INDEXEND>
+<FAPPE-S; driver1="V2"; row1="..."> <!-- FORBIDDEN: External code using internal V2 -->
+```
+
+❌ **WRONG - Internal referencing external:**
+```
+<CONST-E; row1="V5(D)|External Item(L)|...">
+<INDEXBEGIN; driver1="V1">
+  <FORMULA-S; row1="A1(D)|Internal Item(L)|rd{V5}*100"> <!-- FORBIDDEN: Internal code using external V5 -->
+<INDEXEND>
+```
+
+### **Enforcement Rule:**
+If ANY code attempts to cross the INDEX boundary (in either direction), the entire model structure is INVALID and must be redesigned. The INDEX system must be completely self-contained with the sole exception of the driver1 connection.
+
+## INDEX SYSTEM STRUCTURE
+
+```
+<INDEXBEGIN; driver1="[VolumeDriver]"; row1="..."; row2="Month #"; row3="Year #"; row4="Year end #">
+  [Unit economics codes for ONE unit]
+<INDEXEND; row2="Aggregate Growth Curve Items:">
+```
+
+### Key Components:
+
+1. **INDEXBEGIN Code:**
+   - `driver1` parameter MUST reference the volume driver (e.g., "V1" for # of new units)
+   - Creates special time series: Month 1, Month 2, etc. (age-based, not calendar dates)
+   - Sets up scaling framework
+
+2. **Special Rows in INDEXBEGIN:**
+   - `row1`: Contains "INDEXBEGIN" markers and "F" in Y1-Y6 columns for formulas
+   - `row2`: "Month #" - represents age of unit (Month 1 = first month of life)
+   - `row3`: "Year #" - maps months to years for annual scaling
+   - `row4`: "Year end #" - defines year-end periods for calculations
+
+3. **Unit Economics (Between INDEXBEGIN/INDEXEND):**
+   - Model performance of ONE unit across its lifecycle
+   - Use monthsr parameter for month-by-month patterns
+   - Include fincode in column (F) for items that should be aggregated
+   - Use sumif="year" or sumif="average" for annual scaling
+
+4. **INDEXEND Code:**
+   - Closes the INDEX block
+   - Creates aggregate rows that sum across all units and ages
+
+## SCALING LOGIC
+
+The system automatically creates formulas that:
+- Track each unit's age in every period
+- Apply the appropriate lifecycle value based on unit age
+- Aggregate across all units of different ages
+- Scale by the volume driver
+
+**Example Calculation:**
+- Volume: 1 restaurant opens Jan 2025, 2 open Feb 2025
+- Restaurant revenue: $1000 in month 1, $2000 in month 2
+- Jan 2025 total: $1000 (1 restaurant × $1000 month-1 revenue)  
+- Feb 2025 total: $4000 (1 restaurant × $2000 month-2 revenue + 2 restaurants × $1000 month-1 revenue)
+
+## CRITICAL REQUIREMENTS
+
+1. **driver1 Parameter**: INDEXBEGIN must reference the volume driver
+2. **monthsr Parameter**: Use for lifecycle patterns within INDEX
+3. **sumif Parameter**: Required for annual aggregation (usually "year" or "average")
+4. **Fincode Column**: Items with fincodes in column (F) get aggregated
+5. **Y1-Y6 "F" Values**: Required in INDEXBEGIN row1 for formula generation
+6. **Header Labels**: Within INDEX blocks, use ONLY LABELH3 for section headers. Never use LABELH1 or LABELH2 within INDEX systems
+
+## INDEX-SPECIFIC FUNCTIONS
+
+These custom functions work specifically within INDEX systems for unit age-based calculations:
+
+### **ONETIMEINDEX(month)**
+- **Formula**: `(U$8=month)`
+- **Purpose**: One-time event at specific unit age month
+- **Example**: `ONETIMEINDEX(12)` = True only in month 12 of unit's life
+- **Use**: Single payments, milestone events, one-time costs
+
+### **BEGINDEX(month)**
+- **Formula**: `(U$8>=month)`
+- **Purpose**: Start from specific unit age month and continue
+- **Example**: `BEGINDEX(6)` = True from month 6 onwards in unit's life
+- **Use**: Delayed starts, post-ramp costs, ongoing expenses after grace period
+
+### **ENDINDEX(month)**
+- **Formula**: `(U$8<=month)`
+- **Purpose**: End at specific unit age month
+- **Example**: `ENDINDEX(24)` = True until month 24 of unit's life
+- **Use**: Limited-time costs, initial period expenses, temporary benefits
+
+### **INTONLY(month)**
+- **Formula**: `(U$8>month)`
+- **Purpose**: Condition for periods after specific month
+- **Example**: `INTONLY(6)` = True for months 7+ of unit's life
+- **Use**: Interest-only periods, costs that start after delays
+
+### **Usage in FORMULA-S:**
+```
+<FORMULA-S; row1="A1(D)|Grace Period Cost(L)|is: expense(F)|1000*ENDINDEX(6)">
+<FORMULA-S; row1="A2(D)|Ongoing Revenue(L)|is: revenue(F)|5000*BEGINDEX(7)">
+<FORMULA-S; row1="A3(D)|Year 1 Bonus(L)|is: expense(F)|2000*ONETIMEINDEX(12)">
+```
+
+## LABELING CONVENTIONS FOR INDEX SYSTEMS
+
+🚨 **CRITICAL RULE**: Within INDEX blocks, NEVER add "per unit", "per restaurant", "per store", etc. to item labels. The INDEX context already establishes that everything is per unit.
+
+### Why This Matters:
+- INDEX blocks model unit economics - the "per unit" context is implicit
+- Items with fincodes use the same label both inside INDEX and for external aggregated items
+- Adding "per unit" creates redundant and confusing labels in the aggregated model
+
+### Correct vs Incorrect Labeling:
+
+❌ **INCORRECT** - Redundant "per restaurant" labels:
+```
+<INDEXBEGIN; driver1="V1">
+  <SPREAD-E; row1="V2(D)|Sales per Restaurant(L)|is: revenue(F)|...">
+  <SPREAD-E; row1="V3(D)|COGS per Restaurant(L)|is: cogs(F)|...">
+<INDEXEND>
+```
+
+✅ **CORRECT** - Clean labels without unit reference:
+```
+<INDEXBEGIN; driver1="V1">
+  <SPREAD-E; row1="V2(D)|Sales(L)|is: revenue(F)|...">
+  <SPREAD-E; row1="V3(D)|COGS(L)|is: cogs(F)|...">
+<INDEXEND>
+```
+
+### Special Attention for Fincode Items:
+- Items with fincodes (F) column appear in both INDEX unit economics AND external aggregated model
+- Their labels must work in both contexts
+- "Sales" works for both unit-level and aggregate-level
+- "Sales per Restaurant" would be confusing in the aggregated external model
+
+### Acceptable Label Patterns Within INDEX:
+- "Sales", "Revenue", "COGS"
+- "Marketing Expense", "Rent", "Labor Costs"  
+- "Capex", "Working Capital", "Depreciation"
+- "Operating Income", "EBITDA"
+
+### Avoid These Patterns Within INDEX:
+- "Sales per Restaurant", "Revenue per Store"
+- "COGS per Unit", "Marketing per Location"
+- "Capex per Restaurant", "Depreciation per Store"
+
+## ISOLATION REQUIREMENTS (SELF-CONTAINMENT)
+
+🚨 **CRITICAL RULE**: Codestrings outside of the INDEX block CANNOT reference drivers from items inside the INDEX block. Everything must be self-contained within the INDEX system.
+
+### Why This Matters:
+- INDEX items are scaled and aggregated using special formulas
+- External references would break the scaling mathematics
+- Driver relationships must respect the INDEX boundary
+
+### Examples of Required Self-Containment:
+
+❌ **INCORRECT** - External depreciation referencing INDEX capex:
+```
+<INDEXBEGIN; driver1="V1">
+  <CONST-E; row1="V2(D)|Capex per Restaurant(L)|...">
+<INDEXEND>
+<FAPPE-S; driver1="V2"; row1="..."> <!-- WRONG: Can't reference V2 from outside INDEX -->
+```
+
+✅ **CORRECT** - Both capex and depreciation inside INDEX:
+```
+<INDEXBEGIN; driver1="V1">
+  <CONST-E; row1="V2(D)|Capex per Restaurant(L)|is: capex(F)|...">
+  <FAPPE-S; driver1="V2"; row1="V3(D)|Depreciation per Restaurant(L)|is: depreciation(F)|...">
+<INDEXEND>
+```
+
+### Common Scenarios Requiring Internal Placement:
+
+1. **Capex + Depreciation**: Both must be inside INDEX if capex varies by unit age
+2. **Working Capital**: If working capital scales with unit revenue, place inside INDEX
+3. **Operating Expenses**: Unit-specific opex should be modeled inside INDEX
+4. **Tax Calculations**: If taxes depend on unit-level profits, include inside INDEX
+5. **Interest Expense**: If debt is tied to unit-level capex, model inside INDEX
+
+### External Model Integration:
+
+- INDEX items with fincodes automatically aggregate to external model
+- External model sees total aggregated values, not individual unit economics
+- Use INDEXEND aggregate rows for external model references
+
+## VALIDATION CHECKLIST
+
+✓ Volume driver exists before INDEX block
+✓ INDEXBEGIN has driver1 parameter pointing to volume driver  
+✓ Unit economics use monthsr for lifecycle patterns
+✓ Revenue/cost items have fincode in column (F)
+✓ sumif parameter present on items that should aggregate annually
+✓ INDEXEND properly closes the block
+✓ **NO external codestrings reference drivers from inside INDEX**
+✓ **ALL related calculations (capex, depreciation, etc.) are inside INDEX**
+✓ **INDEX system is completely self-contained** 
