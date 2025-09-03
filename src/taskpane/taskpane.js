@@ -2596,18 +2596,9 @@ Office.onReady(async (info) => {
     }
   });
   
-  // Initialize backend integration
-  try {
-    console.log("🚀 Initializing backend integration...");
-    console.log('🔗 ========================================');
-    console.log(`🔗 USING BACKEND: ${CONFIG.backend.baseUrl}`);
-    console.log('🔗 ========================================');
-    
-    // Check backend health
-    // Backend health check removed - standalone mode
-  } catch (error) {
-    console.warn("Backend initialization error:", error);
-  }
+  // Backend removed - running in standalone mode
+  console.log("🚀 Running in standalone mode (no backend)");
+  console.log('🔗 ========================================');
   
   // Try to set optimal task pane width for our sidebar layout
   try {
@@ -2645,19 +2636,12 @@ Office.onReady(async (info) => {
 
     productionLog(`Elements found - appBody: ${!!appBody}, clientModeView: ${!!clientModeView}, authenticationView: ${!!authenticationView}`);
 
-    // >>> CHECK AUTH AND NAVIGATE DIRECTLY
-    console.log('🔍 Checking authentication on app initialization...');
+    // >>> NAVIGATE DIRECTLY TO DEVELOPER MODE
+    console.log('🔍 Initializing app...');
     console.log(`📍 URL: ${window.location.href}`);
-    console.log(`🌐 backendAPI available: ${!!backendAPI}`);
-    console.log(`🔐 backendAPI.isAuthenticated(): ${backendAPI ? backendAPI.isAuthenticated() : 'N/A'}`);
-    
-    // ACCESS CODE LAYER - DISABLED FOR DEVELOPMENT
-    const ACCESS_CODE_ENABLED = false; // Disabled - go straight to developer mode
-    // END ACCESS CODE LAYER
-    
-    // Check if user is authenticated - inline check to avoid scoping issues
-    const isAuthenticated = backendAPI && backendAPI.isAuthenticated();
-    console.log(`✅ Direct auth check returned: ${isAuthenticated}`);
+    console.log('🚀 Going straight to Developer Mode');
+    showDeveloperMode();
+    return; // Exit early, skip all authentication checks
     
     if (isAuthenticated) {
       // User is authenticated, clear any force_logout flags
@@ -2740,13 +2724,13 @@ Office.onReady(async (info) => {
       }
       // END ACCESS CODE VALIDATION
       
-      // Go directly to developer mode (bypassing authentication)
-      console.log('🚀 User authenticated - but going to developer mode');
-      showDeveloperMode();
+      // Go directly to client mode (bypassing authentication)
+      console.log('🚀 Starting in client mode');
+      showClientMode();
     } else {
-      // User is not authenticated, but still go to developer mode
-      console.log('🔓 User not authenticated - but going to developer mode anyway');
-      showDeveloperMode();
+      // Go directly to client mode
+      console.log('🔓 Starting in client mode');
+      showClientMode();
     }
     // <<< END ADDED
 

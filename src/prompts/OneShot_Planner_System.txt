@@ -112,6 +112,30 @@ Output **only** a JSON object with tab names and descriptions:
 - **Debt/Equity**: Only include if funding explicitly mentioned
  - **If unspecified but required for concreteness**: Choose minimal standard numeric values and state them explicitly in the JSON (e.g., set Accounts Receivable days = 0; Inventory days = 30) so no description remains vague
 
+### SCREENSHOT-DRIVEN MODELING RULES
+
+- If a financial statement screenshot is provided, model every line item individually. Do not aggregate categories. Example: if the income statement shows G&A, S&M, and R&D, model each separately (not a single operating costs item).
+- Revenue: hold the screenshot level constant in Year 1, then grow 5% per year thereafter.
+- Direct costs/COGS: drive each item as a percent of revenue.
+- Operating costs: forecast each item from its Year 1 value grown 5% per year.
+- Taxes: calculate as a percentage of pre-tax income.
+- Balance sheet defaults:
+  - Current assets:
+    - Normal working capital items: use DSO-style days; back into days relative to revenue, COGS, operating costs, or tax expense as appropriate.
+    - Unusual items (deposits, etc.): hold constant.
+    - Cash and equivalents (including treasuries): do not model here.
+  - Current liabilities:
+    - Normal working capital items: use DPO-style days; back into days relative to underlying costs.
+    - Current portion of long-term debt: consolidate with long-term debt and forecast as one item.
+    - Lines of credit: hold constant.
+  - Long-term assets:
+    - PP&E or intangibles: back into useful life necessary to reproduce the shown depreciation/amortization.
+    - Goodwill and other unusual items: hold constant.
+  - Debt items:
+    - Assume bullet debt with a 5-year term by default.
+    - If the cash flow statement shows payments, approximate an amortization term that produces those payments.
+  - Capex: hold constant for Year 1, then grow 5% annually; use a 10-year useful life.
+
 ### COMMUNICATION RULES:
 - **Never mention code names or technical details** - clients won't understand
 - **Clearly separate what will vs. won't be modeled**

@@ -10,45 +10,18 @@ window.app = {
     isOfficeInitialized: false
 };
 
-// Initialize Office
-Office.onReady(async (info) => {
-    console.log('Office.js is ready');
-    app.isOfficeInitialized = true;
-    
-    // Initialize view loader
-    app.viewLoader = new ViewLoader();
-    
-    // Determine initial view based on context
-    const initialView = determineInitialView();
-    console.log('🔐 Initial view determined:', initialView);
-    console.log('🔐 Session storage validated_access_code:', sessionStorage.getItem('validated_access_code'));
-    console.log('🔐 Local storage lastView:', localStorage.getItem('lastView'));
-    
-    // Load the initial view
-    await app.loadView(initialView);
-});
+// Initialize Office - DISABLED for direct developer mode
+// Office.onReady is handled in main taskpane.js
+console.log('🚀 app.js - Office.onReady disabled, using main taskpane.js handler');
 
 /**
  * Determine which view to load initially
  * @returns {string} View name to load
  */
 function determineInitialView() {
-    // Check URL parameters
-    const urlParams = new URLSearchParams(window.location.search);
-    const viewParam = urlParams.get('view');
-    
-    if (viewParam) {
-        return viewParam;
-    }
-    
-    // Check local storage for last used view
-    const lastView = localStorage.getItem('lastView');
-    if (lastView && lastView !== 'startup-menu') {
-        return lastView;
-    }
-    
-    // Default to client mode - no authentication needed
-    return 'client-mode';
+    // Always return developer mode - bypass all checks
+    console.log('🚀 Bypassing all checks - going to developer mode');
+    return 'developer-mode';
 }
 
 // Authentication removed - always return true

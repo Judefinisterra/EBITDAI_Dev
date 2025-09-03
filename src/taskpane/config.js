@@ -6,7 +6,7 @@ export const CONFIG = {
   
   // Base URL for assets and API calls
   get baseUrl() {
-    return this.isDevelopment ? 'https://localhost:3002' : '';
+    return this.isDevelopment ? 'https://localhost:3003' : '';
   },
   
   // Helper function to get full URL for assets
@@ -64,7 +64,7 @@ export const CONFIG = {
   // Helper function to get prompt URL
   getPromptUrl(filename) {
     return this.isDevelopment 
-      ? `https://localhost:3002/prompts/${filename}`
+      ? `https://localhost:3003/prompts/${filename}`
       : `./prompts/${filename}`;
   },
 
@@ -72,16 +72,25 @@ export const CONFIG = {
   // All backend communication has been removed
 };
 // Log configuration on load (for debugging)
-console.log('🔗 ========================================');
-console.log('🔗 CONFIG LOADED - Standalone mode (no backend)');
-console.log(`🔗 Environment: ${CONFIG.isDevelopment ? 'DEVELOPMENT' : 'PRODUCTION'}`);
-console.log('🔗 ========================================');
-
-if (CONFIG.isDevelopment) {
-  console.log('Config loaded:', {
-    isDevelopment: CONFIG.isDevelopment,
-    baseUrl: CONFIG.baseUrl,
-    backendUrl: CONFIG.backend.baseUrl
+// Only log after Office is ready or if running outside of Office context
+if (typeof Office !== 'undefined' && Office.onReady) {
+  Office.onReady(() => {
+    console.log('🔗 ========================================');
+    console.log('🔗 CONFIG LOADED - Standalone mode (no backend)');
+    console.log(`🔗 Environment: ${CONFIG.isDevelopment ? 'DEVELOPMENT' : 'PRODUCTION'}`);
+    console.log('🔗 ========================================');
+    
+    if (CONFIG.isDevelopment) {
+      console.log('Config loaded:', {
+        isDevelopment: CONFIG.isDevelopment,
+        baseUrl: CONFIG.baseUrl
+        // Backend removed - standalone mode
+      });
+    }
   });
+} else {
+  // For non-Office contexts (like tests)
+  console.log('🔗 CONFIG LOADED - Standalone mode (no backend)');
+  console.log(`🔗 Environment: ${CONFIG.isDevelopment ? 'DEVELOPMENT' : 'PRODUCTION'}`);
 }
 

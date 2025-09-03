@@ -3077,6 +3077,11 @@ function handleClientModeInsertToEditor() {
 }
 
 
+// Office.onReady is disabled here since AIcalls.js is used as a module by taskpane.js
+// The main Office.onReady handler is in taskpane.js
+// If you need to use AIcalls.js standalone, uncomment the Office.onReady block below
+
+/*
 Office.onReady(async (info) => {
   if (info.host === Office.HostType.Excel) {
     // Check if this is being loaded as a module by taskpane.js
@@ -3437,6 +3442,7 @@ Office.onReady(async (info) => {
     // ... any other existing Office.onReady logic for developer mode ...
   }
 });
+*/
 
 
 
